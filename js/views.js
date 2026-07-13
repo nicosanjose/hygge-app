@@ -266,6 +266,7 @@ function viewProps() {
             <span>${ICON.house} ${p.habs || 0} hab · ${p.banos || 0} baños</span>
             ${p.llave ? `<span>${ICON.key} ${esc(p.llave)}</span>` : ""}
           </div>
+          ${(p.servicios || []).length ? `<div style="display:flex;gap:5px;flex-wrap:wrap">${p.servicios.slice(0, 3).map(s => `<span class="chip line" style="font-size:10.5px;padding:2.5px 8px">${esc(s)}</span>`).join("")}${p.servicios.length > 3 ? `<span class="chip line" style="font-size:10.5px;padding:2.5px 8px">+${p.servicios.length - 3}</span>` : ""}</div>` : ""}
           <div class="prop-occ"><span>${fmtMes(mes).split(" ")[0]}</span><span class="bar"><i style="width:${Math.min(100, st.ocup)}%"></i></span><b>${st.ocup}%</b></div>
           <div class="prop-next">${ICON.cal} ${st.noches} noches este mes · ${st.limpiezas} limpiezas</div>
         </div>
@@ -274,12 +275,13 @@ function viewProps() {
   ${list.length ? "" : `<div class="empty">${ICON.search}Sin resultados para ese filtro.</div>`}`;
 }
 
-/* calendario real de un mes */
+/* calendario real de un mes (reservas + servicios programados) */
 function calendarioProp(p, mes) {
   const y = +mes.slice(0, 4), m = +mes.slice(5, 7);
   const dias = new Date(y, m, 0).getDate();
   const dow = (new Date(y, m - 1, 1).getDay() + 6) % 7;
   const rs = DB.reservas.filter(r => r.propiedad_id === p.id);
+  const diasTarea = new Set(DB.tareas.filter(t => t.propiedad_id === p.id && t.fecha.startsWith(mes)).map(t => +t.fecha.slice(8, 10)));
   const ocupado = d => rs.find(r => r.estado === "confirmada" && r.entrada <= d && d < r.salida);
   const bloqueado = d => rs.find(r => r.estado === "bloqueo" && r.entrada <= d && d < r.salida);
   let cells = "";
@@ -290,7 +292,7 @@ function calendarioProp(p, mes) {
     const esIn = rs.some(x => x.entrada === iso && x.estado === "confirmada");
     const esOut = rs.some(x => x.salida === iso && x.estado === "confirmada");
     cells += `<div class="cal-day ${r ? "busy" : ""} ${b ? "clean" : ""} ${iso === hoyISO() ? "today" : ""} ${esIn ? "in" : ""} ${esOut ? "outday" : ""}"
-      onclick="openReservaForm(${p.id},'${iso}')" title="${r ? esc(r.huesped || "Reservada") + " · " + r.canal : b ? "Bloqueado" : "Libre · click para reservar"}">${d}</div>`;
+      onclick="openReservaForm(${p.id},'${iso}')" title="${r ? esc(r.huesped || "Reservada") + " · " + r.canal : b ? "Bloqueado" : "Libre · click para reservar"}${diasTarea.has(d) ? " · servicio programado" : ""}">${d}${diasTarea.has(d) ? '<span class="m"></span>' : ""}</div>`;
   }
   return `<div class="cal"><div class="cal-head"><span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
   <div class="cal-grid">${cells}</div></div>
@@ -299,26 +301,35 @@ function calendarioProp(p, mes) {
     <span><i style="background:#fff;box-shadow:inset 0 0 0 2px var(--blue);border-radius:3px"></i>Entrada</span>
     <span><i style="background:#fff;box-shadow:inset 0 0 0 2px var(--terra);border-radius:3px"></i>Salida</span>
     <span><i style="background:#fff;box-shadow:inset 0 0 0 2px var(--ok);border-radius:3px"></i>Bloqueo propietario</span>
+    <span><i style="background:var(--ok)"></i>Servicio programado</span>
   </div>`;
 }
 
 function viewPropDetail() {
   const p = P(STATE.prop); if (!p) { STATE.route = "propiedades"; return viewProps(); }
-  const tab = STATE.propTab || "resumen";
+  const esAV = (p.servicios || []).includes("Alquiler vacacional") || DB.reservas.some(r => r.propiedad_id === p.id);
+  let tab = STATE.propTab || "resumen";
+  if (tab === "calendario" && !esAV) tab = "resumen";
   const mes = STATE.propMes || mesISO();
   const incs = DB.incidencias.filter(i => i.propiedad_id === p.id);
   const st = statsMesProp(p.id, mesISO());
   const o = O(p.propietario_id);
-  const tabs = [["resumen", "Resumen"], ["calendario", "Calendario"], ["limpiezas", "Servicios"], ["incidencias", `Incidencias (${incs.filter(i => i.estado === "abierta").length})`], ["ficha", "Ficha"], ["docs", "Documentos"]];
+  const tabs = [["resumen", "Resumen"],
+    ...(esAV ? [["calendario", "Calendario"]] : []),
+    ["seguimiento", "Seguimiento"],
+    ["limpiezas", "Servicios"], ["incidencias", `Incidencias (${incs.filter(i => i.estado === "abierta").length})`], ["ficha", "Ficha"], ["docs", "Documentos"]];
   let body = "";
   if (tab === "resumen") {
     const proxima = DB.reservas.filter(r => r.propiedad_id === p.id && r.entrada >= hoyISO() && r.estado === "confirmada").sort((a, b) => a.entrada.localeCompare(b.entrada))[0];
     const tarProx = DB.tareas.filter(t => t.propiedad_id === p.id && t.fecha >= hoyISO() && t.estado !== "hecha").sort((a, b) => a.fecha.localeCompare(b.fecha))[0];
+    const horasMes = horasPropMes(p.id, mesISO()), costeMes = costePropMes(p.id, mesISO());
     body = `
     <div class="kpis" style="margin-bottom:16px">
-      <div class="kpi"><div class="lab">${ICON.cal} Noches este mes</div><div class="val">${st.noches}<small>/${st.dias}</small></div><div class="sub">${st.ocup}% de ocupación</div></div>
-      <div class="kpi"><div class="lab">${ICON.broom} Limpiezas hechas</div><div class="val">${st.limpiezas}</div><div class="sub">este mes</div></div>
-      <div class="kpi"><div class="lab">${ICON.euro} Ingresos por reservas</div><div class="val">${eur0(st.ingresos)}</div><div class="sub">reservas con entrada este mes</div></div>
+      ${esAV ? `<div class="kpi"><div class="lab">${ICON.cal} Noches este mes</div><div class="val">${st.noches}<small>/${st.dias}</small></div><div class="sub">${st.ocup}% de ocupación</div></div>` : ""}
+      <div class="kpi"><div class="lab">${ICON.broom} Servicios hechos</div><div class="val">${tareasPropMes(p.id, mesISO()).length}</div><div class="sub">este mes</div></div>
+      <div class="kpi"><div class="lab">${ICON.clock} Horas de trabajo</div><div class="val">${horasMes.toLocaleString("es-ES")}<small>h</small></div><div class="sub">del equipo, este mes</div></div>
+      <div class="kpi"><div class="lab">${ICON.euro} Coste de trabajo</div><div class="val">${costeMes ? eur0(costeMes) : "—"}</div><div class="sub">${costeMes ? "horas × tarifa de cada trabajador" : "pon tarifas €/h a los trabajadores"}</div></div>
+      ${esAV ? `<div class="kpi"><div class="lab">${ICON.euro} Ingresos por reservas</div><div class="val">${eur0(st.ingresos)}</div><div class="sub">entradas de este mes</div></div>` : ""}
       <div class="kpi"><div class="lab">${ICON.alert} Incidencias abiertas</div><div class="val">${incs.filter(i => i.estado === "abierta").length}</div><div class="sub">${incs.length} en total</div></div>
     </div>
     <div class="grid" style="grid-template-columns:1.4fr 1fr">
@@ -347,6 +358,43 @@ function viewPropDetail() {
         || `<p class="hint">Sin reservas este mes. Toca un día libre del calendario para crear una.</p>`}
       </div>
     </div>`;
+  if (tab === "seguimiento") {
+    const compras = DB.compras.filter(c => c.propiedad_id === p.id);
+    const fotosEstado = DB.tareas.filter(t => t.propiedad_id === p.id && (t.fotos || []).length)
+      .sort((a, b) => b.fecha.localeCompare(a.fecha))
+      .flatMap(t => t.fotos.map(f => ({ f, fecha: t.fecha, quien: (t.equipo_ids || []).map(id => S(id)?.nombre.split(" ")[0]).filter(Boolean).join(", ") })))
+      .slice(0, 24);
+    const notas = DB.tareas.filter(t => t.propiedad_id === p.id && t.notas_equipo)
+      .sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 6);
+    body = `
+    <div class="grid" style="grid-template-columns:1.3fr 1fr">
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="card"><div class="card-head"><h3>Fotos del estado de la vivienda</h3><span class="sub">las sube el equipo al trabajar; las más recientes primero</span></div>
+          ${fotosEstado.length ? `<div class="galeria">${fotosEstado.map(x => `
+            <a href="#" onclick="event.preventDefault();abrirDoc('${esc(x.f)}')" title="${fmtCorto(x.fecha)}${x.quien ? " · " + esc(x.quien) : ""}"><img data-foto="${esc(x.f)}" alt="estado"></a>`).join("")}</div>`
+          : `<div class="empty">${ICON.camera}Aún no hay fotos. El equipo las adjunta al finalizar cada servicio.</div>`}
+        </div>
+        <div class="card"><div class="card-head"><h3>Observaciones del equipo</h3></div>
+          ${notas.length ? `<div class="tl">${notas.map(t => `<div class="tl-item"><b>«${esc(t.notas_equipo)}»</b>
+            <span>${fmtCorto(t.fecha)} · ${(t.equipo_ids || []).map(id => S(id)?.nombre.split(" ")[0]).filter(Boolean).join(", ") || "equipo"}</span></div>`).join("")}</div>`
+          : `<p class="hint">Sin observaciones todavía.</p>`}
+        </div>
+      </div>
+      <div class="card"><div class="card-head"><h3>Lista de compras y materiales</h3><span class="sub">el equipo añade lo que falta; márcalo al comprarlo</span></div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <input class="input" id="compra-nueva" placeholder="Ej. 2 bombillas E27, gel de baño…" style="flex:1" onkeydown="if(event.key==='Enter')crearCompraUI(${p.id})">
+          <button class="btn sm sage" onclick="crearCompraUI(${p.id})">${ICON.plus} Añadir</button>
+        </div>
+        ${compras.length ? compras.map(c => `
+          <div class="set-row"><button class="check-item" style="width:auto;padding:6px;background:none;border:none" onclick="marcarCompraUI(${c.id},${c.estado !== "comprado"})">
+            <span class="bx" style="${c.estado === "comprado" ? "background:var(--ok);border-color:var(--ok);color:#fff" : ""}">${ICON.check}</span></button>
+          <div class="tx"><b style="${c.estado === "comprado" ? "text-decoration:line-through;opacity:.6" : ""}">${esc(c.texto)}</b>
+            <span>${esc(c.creado_por || "")} · ${fmtCorto(c.created_at.slice(0, 10))}${c.estado === "comprado" ? " · comprado" : ""}</span></div>
+          <div class="end">${rolDireccion() ? `<button class="btn xs outline" onclick="borrarCompraUI(${c.id})">${ICON.x}</button>` : ""}</div></div>`).join("")
+        : `<p class="hint">Nada pendiente de comprar.</p>`}
+      </div>
+    </div>`;
+  }
   if (tab === "limpiezas") {
     const ts = DB.tareas.filter(t => t.propiedad_id === p.id).sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 30);
     body = ts.length ? `<div class="tbl-wrap"><table class="tbl">
@@ -375,6 +423,7 @@ function viewPropDetail() {
           <div class="fact"><div class="k">Capacidad</div><div class="v">${p.plazas || "—"} plazas</div></div>
           <div class="fact"><div class="k">Distribución</div><div class="v">${p.habs || 0} hab · ${p.banos || 0} baños</div></div>
           <div class="fact"><div class="k">Piscina</div><div class="v">${p.piscina ? "Sí" : "No"}</div></div>
+          <div class="fact" style="grid-column:1/-1"><div class="k">Servicios contratados</div><div class="v">${(p.servicios || []).join(" · ") || "Sin definir"}</div></div>
           <div class="fact"><div class="k">Canales</div><div class="v">${(p.canales || []).join(" + ") || "—"}</div></div>
           <div class="fact"><div class="k">Dirección</div><div class="v">${esc(p.direccion || "—")}</div></div>
         </div>
@@ -397,7 +446,8 @@ function viewPropDetail() {
   <div class="prop-hero">
     ${coverProp(p)}
     <div class="inner">
-      <div><h2>${esc(p.nombre)}</h2><div class="loc">${ICON.pin} ${esc(p.zona || "")} ${p.tipo ? "· " + esc(p.tipo) : ""} ${p.licencia ? "· " + esc(p.licencia) : ""}</div></div>
+      <div><h2>${esc(p.nombre)}</h2><div class="loc">${ICON.pin} ${esc(p.zona || "")} ${p.tipo ? "· " + esc(p.tipo) : ""} ${p.licencia ? "· " + esc(p.licencia) : ""}</div>
+        ${(p.servicios || []).length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${p.servicios.map(s => `<span class="chip" style="background:rgba(255,255,255,.16);color:#f5f3ea;backdrop-filter:blur(4px)">${esc(s)}</span>`).join("")}</div>` : ""}</div>
       <div class="right">
         ${o?.email ? `<a class="btn sm primary" href="mailto:${esc(o.email)}?subject=${encodeURIComponent(p.nombre + " · Hygge Services")}">${ICON.send} Escribir al propietario</a>` : ""}
       </div>
@@ -738,24 +788,53 @@ function paperFacturaTrabajador(e, mes) {
 /* ============================================================
    PLANIFICACIÓN
    ============================================================ */
+function viewPlanSemana(fecha) {
+  const lunes = addDias(fecha, -((new Date(fecha + "T12:00").getDay() + 6) % 7));
+  const dias = Array.from({ length: 7 }, (_, i) => addDias(lunes, i));
+  const activos = DB.emp.filter(e => e.activo);
+  const tareasDe = (empId, dia) => DB.tareas.filter(t => t.fecha === dia && (empId ? (t.equipo_ids || []).includes(empId) : !(t.equipo_ids || []).length));
+  const chip = t => `<button class="week-chip ${t.estado}" onclick="openTareaForm('${t.fecha}',null,${t.id})" title="${esc(P(t.propiedad_id)?.nombre || "")} · ${t.tipo}">
+    ${(t.hora_inicio || "").slice(0, 5)} ${esc((P(t.propiedad_id)?.nombre || "").replace(/^(Villa|Finca|Casa|Xalet|Apartament|Àtic)\s+/i, ""))}</button>`;
+  const sinAsignar = dias.some(d => tareasDe(null, d).length);
+  return `
+  <div class="tbl-wrap"><table class="tbl week" style="min-width:920px">
+    <thead><tr><th style="min-width:150px">Trabajador</th>${dias.map(d => `
+      <th style="${d === hoyISO() ? "color:var(--gold-deep)" : ""}">${new Date(d + "T12:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })}</th>`).join("")}</tr></thead>
+    <tbody>
+      ${activos.map(e => `<tr><td><span class="who">${ava(e)} ${esc(e.nombre.split(" ")[0])}</span></td>
+        ${dias.map(d => `<td>${tareasDe(e.id, d).map(chip).join("") || ""}</td>`).join("")}</tr>`).join("")}
+      ${sinAsignar ? `<tr><td><span class="who" style="color:var(--terra)">${ICON.alert} Sin asignar</span></td>
+        ${dias.map(d => `<td>${tareasDe(null, d).map(chip).join("") || ""}</td>`).join("")}</tr>` : ""}
+    </tbody></table></div>
+  <p class="hint" style="margin-top:10px">Toca un servicio para editarlo o reasignarlo. ${sinAsignar ? "Los de la fila roja no tienen equipo todavía." : ""}</p>`;
+}
+
 function viewPlan() {
   const fecha = STATE.planDia || hoyISO();
+  const vista = STATE.planVista || "dia";
   const salidas = DB.reservas.filter(r => r.salida === fecha && r.estado === "confirmada");
   const entradas = DB.reservas.filter(r => r.entrada === fecha && r.estado === "confirmada");
   const tareas = DB.tareas.filter(t => t.fecha === fecha).sort((a, b) => (a.hora_inicio || "").localeCompare(b.hora_inicio || ""));
   const stChip = { hecha: '<span class="chip ok">Hecha</span>', encurso: '<span class="chip blue"><i class="d"></i>En curso</span>', pendiente: '<span class="chip line">Pendiente</span>' };
   if (!DB.props.length) return vacio(ICON.cal, "Primero añade propiedades", "La planificación se construye sobre las reservas y servicios de tus propiedades.", `<button class="btn primary" data-go="propiedades">${ICON.house} Ir a Propiedades</button>`);
-  return `
+  const salto = vista === "semana" ? 7 : 1;
+  const barra = `
   <div class="toolbar">
+    <div class="seg">
+      <button class="${vista === "dia" ? "on" : ""}" onclick="STATE.planVista='dia';rerender()">Día</button>
+      <button class="${vista === "semana" ? "on" : ""}" onclick="STATE.planVista='semana';rerender()">Semana</button>
+    </div>
     <span class="month-nav">
-      <button onclick="STATE.planDia='${addDias(fecha, -1)}';rerender()">${ICON.left}</button>
-      <b>${fecha === hoyISO() ? "Hoy · " : ""}${fmtCorto(fecha)}</b>
-      <button onclick="STATE.planDia='${addDias(fecha, 1)}';rerender()">${ICON.right}</button>
+      <button onclick="STATE.planDia='${addDias(fecha, -salto)}';rerender()">${ICON.left}</button>
+      <b>${vista === "semana" ? "Semana del " + fmtCorto(addDias(fecha, -((new Date(fecha + "T12:00").getDay() + 6) % 7))) : (fecha === hoyISO() ? "Hoy · " : "") + fmtCorto(fecha)}</b>
+      <button onclick="STATE.planDia='${addDias(fecha, salto)}';rerender()">${ICON.right}</button>
     </span>
     ${fecha !== hoyISO() ? `<button class="btn xs outline" onclick="STATE.planDia='${hoyISO()}';rerender()">Volver a hoy</button>` : ""}
     <div class="spacer"></div>
     <button class="btn sm primary" onclick="openTareaForm('${fecha}')">${ICON.plus} Nuevo servicio</button>
-  </div>
+  </div>`;
+  if (vista === "semana") return barra + viewPlanSemana(fecha);
+  return barra + `
   <div class="plan-cols">
     <div class="plan-col"><h4>${ICON.out} Check-outs <span class="n">${salidas.length}</span></h4>
       ${salidas.map(r => `<div class="plan-card">
@@ -922,6 +1001,10 @@ function viewInformes() {
       <h4>Ocupación por propiedad</h4>
       <p>Noches ocupadas, % de ocupación, limpiezas realizadas e ingresos por reservas de cada inmueble.</p>
       <button class="btn primary" onclick="openPaperOcupacion('${mes}')">${ICON.doc} Generar</button></div>
+    <div class="report-card"><span class="ic">${ICON.chart}</span>
+      <h4>Horas y coste por propiedad</h4>
+      <p>Cuánto trabajo lleva cada vivienda: servicios realizados, horas reales del equipo y coste (horas × tarifa de cada trabajador).</p>
+      <button class="btn primary" onclick="openPaperCostes('${mes}')">${ICON.doc} Generar</button></div>
     <div class="report-card"><span class="ic">${ICON.euro}</span>
       <h4>Liquidaciones a propietarios</h4>
       <p>Resumen económico por propietario: ingresos por reservas, servicios prestados y neto resultante.</p>
@@ -975,6 +1058,24 @@ function paperOcupacion(mes) {
       <td class="num">${eur(rows.reduce((a, r) => a + r.st.ingresos, 0))}</td></tr></tbody></table>
     <p style="font-size:11.5px;color:var(--muted)">Ingresos: suma de reservas con entrada dentro del mes (si se registró su importe).</p>`);
 }
+function paperCostes(mes) {
+  const rows = DB.props.map(p => {
+    const ts = tareasPropMes(p.id, mes);
+    return { p, n: ts.length, horas: horasPropMes(p.id, mes), coste: costePropMes(p.id, mes) };
+  }).filter(r => r.n > 0 || r.p.activa);
+  if (!rows.length) return paperShell("Horas y coste por propiedad", fmtMes(mes), `<p style="padding:20px 0;color:var(--muted)">Sin propiedades.</p>`);
+  const tH = rows.reduce((a, r) => a + r.horas, 0), tC = rows.reduce((a, r) => a + r.coste, 0), tN = rows.reduce((a, r) => a + r.n, 0);
+  return paperShell("Horas y coste de trabajo por propiedad", fmtMes(mes) + " · según llegada/salida real del equipo",
+    `<table><thead><tr><th>Propiedad</th><th>Zona</th><th class="num">Servicios</th><th class="num">Horas de equipo</th><th class="num">Coste</th></tr></thead>
+    <tbody>${rows.sort((a, b) => b.coste - a.coste || b.horas - a.horas).map(r => `
+      <tr><td><b>${esc(r.p.nombre)}</b></td><td>${esc(r.p.zona || "")}</td>
+      <td class="num">${r.n}</td><td class="num">${r.horas.toLocaleString("es-ES")} h</td>
+      <td class="num">${r.coste ? eur(r.coste) : "—"}</td></tr>`).join("")}
+    <tr class="total"><td colspan="2">Total cartera</td><td class="num">${tN}</td><td class="num">${Math.round(tH * 10) / 10} h</td><td class="num">${eur(tC)}</td></tr></tbody></table>
+    <p style="font-size:11.5px;color:var(--muted)">Horas = duración real de cada servicio (llegada → finalización) × personas asignadas.
+    Coste = duración × tarifa €/h de cada trabajador asignado (ficha del trabajador). Los servicios sin tarifa cuentan horas pero no coste.</p>`);
+}
+
 function liquidacionOwner(o, mes) {
   const propsO = DB.props.filter(p => p.propietario_id === o.id);
   const ini = mes + "-01", fin = addDias(addMeses(mes, 1) + "-01", -1);
@@ -1202,11 +1303,18 @@ function viewMiDia() {
             ${t.estado === "pendiente" ? `<button class="btn sm primary" onclick="tareaLlegada(${t.id})">${ICON.pin} He llegado</button>` : ""}
             ${t.estado === "encurso" ? `
               <button class="btn sm outline" onclick="openChecklist(${t.id})">${ICON.check} Checklist (${chkOk}/${chkTot})</button>
-              <button class="btn sm primary" ${chkTot && chkOk === chkTot ? "" : "disabled"} onclick="tareaFinalizar(${t.id})">${ICON.check} Finalizar</button>` : ""}
+              <button class="btn sm outline" onclick="openCompraRapida(${t.propiedad_id})" title="Añadir a la lista de compras">🛒 Falta algo</button>
+              <button class="btn sm primary" ${chkTot && chkOk === chkTot ? "" : "disabled"} onclick="openFinalizarModal(${t.id})">${ICON.check} Finalizar</button>` : ""}
             ${t.estado === "hecha" ? `<span class="chip ok">Hecha${chkTot ? " · checklist " + Math.round(chkOk / chkTot * 100) + "%" : ""}</span>` : ""}
           </div>
         </div>`; }).join("")
       : `<div class="empty">${ICON.sun}No tienes servicios asignados hoy.</div>`}
+      ${f && !misTareas.some(t => t.estado === "encurso") ? `
+      <div class="task-card" style="border-style:dashed">
+        <span class="ic" style="background:var(--sage-soft);color:var(--sage)">${ICON.pin}</span>
+        <div class="tx"><b>¿Trabajas en una propiedad no planificada?</b><span>Abre el trabajo aquí: quedará registrada tu llegada, salida y las horas en esa casa.</span></div>
+        <div class="act"><button class="btn sm sage" onclick="openTareaAdhoc()">${ICON.plus} Empezar trabajo</button></div>
+      </div>` : ""}
       <div class="task-card" style="border-style:dashed">
         <span class="ic" style="background:var(--terra-soft);color:var(--terra)">${ICON.alert}</span>
         <div class="tx"><b>¿Ha pasado algo en el inmueble?</b><span>Rotura, avería, falta algo… avisa con foto y llega al momento a la oficina.</span></div>

@@ -355,6 +355,12 @@ function openPropForm(id) {
       <div class="f-field"><label>Llaves (consigna)</label><input id="pf-llave" value="${esc(p.llave || "")}" placeholder="L-01"></div>
       <div class="f-field"><label>Tarifa gestión €/mes</label><input id="pf-tgestion" type="number" step="0.01" min="0" value="${p.tarifa_gestion ?? ""}"></div>
       <div class="f-field"><label>Tarifa por limpieza €</label><input id="pf-tlimpieza" type="number" step="0.01" min="0" value="${p.tarifa_limpieza ?? ""}"></div>
+      <div class="f-field full"><label>Servicios contratados</label>
+        <div class="tag-multi" id="pf-servicios">${[...new Set([...(DB.ajustes.servicios_catalogo || ["Alquiler vacacional", "Consigna de llaves", "Limpieza", "Mantenimiento de piscina", "Mantenimiento de jardín"]), ...(p.servicios || [])])].map(s => `<span class="tg ${(p.servicios || []).includes(s) ? "on" : ""}" onclick="this.classList.toggle('on')">${esc(s)}</span>`).join("")}</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input class="input" id="pf-servicio-otro" placeholder="Otro servicio…" style="flex:1" onkeydown="if(event.key==='Enter'){event.preventDefault();addServicioTag()}">
+          <button class="btn sm outline" type="button" onclick="addServicioTag()">${ICON.plus}</button>
+        </div></div>
       <div class="f-field full"><label>Canales</label>
         <div class="tag-multi" id="pf-canales">${["Airbnb", "Booking", "Vrbo", "Directa"].map(c => `<span class="tg ${(p.canales || []).includes(c) ? "on" : ""}" onclick="this.classList.toggle('on')">${c}</span>`).join("")}</div></div>
       <div class="f-field"><label>Piscina</label><select id="pf-piscina"><option value="no" ${!p.piscina ? "selected" : ""}>No</option><option value="si" ${p.piscina ? "selected" : ""}>Sí</option></select></div>
@@ -372,6 +378,11 @@ function openPropForm(id) {
       <button class="btn primary" id="pf-save" onclick="guardarProp(${id || "null"})">${ICON.check} Guardar</button>
     </div>`, true);
 }
+function addServicioTag() {
+  const v = fval("pf-servicio-otro"); if (!v) return;
+  $("#pf-servicios").insertAdjacentHTML("beforeend", `<span class="tg on" onclick="this.classList.toggle('on')">${esc(v)}</span>`);
+  $("#pf-servicio-otro").value = "";
+}
 async function guardarProp(id) {
   const nombre = fval("pf-nombre");
   if (!nombre) return toast("Falta el nombre", "Ponle nombre a la propiedad.", ICON.alert, "terra");
@@ -387,6 +398,7 @@ async function guardarProp(id) {
   const coords = fval("pf-coords").match(/(-?\d+[.,]?\d*)\s*[,;]\s*(-?\d+[.,]?\d*)/);
   payload.lat = coords ? +coords[1].replace(",", ".") : null;
   payload.lng = coords ? +coords[2].replace(",", ".") : null;
+  payload.servicios = $$("#pf-servicios .tg.on").map(t => t.textContent.trim());
   const err = await dbGuardarProp(payload, id, $("#pf-foto")?.files[0]);
   if (err) { btn.disabled = false; btn.textContent = "Guardar"; return toast("No se pudo guardar", err, ICON.alert, "terra"); }
   closeModal(); toast(id ? "Propiedad actualizada" : "Propiedad creada", nombre, ICON.check, "ok"); rerender();
@@ -530,6 +542,10 @@ function openTareaForm(fecha, propId, tareaId) {
       <div class="f-field full"><label>Equipo asignado</label>
         <div class="tag-multi" id="tf-equipo">${DB.emp.filter(e => e.activo).map(e => `<span class="tg ${(t.equipo_ids || []).includes(e.id) ? "on" : ""}" data-id="${e.id}" onclick="this.classList.toggle('on')">${esc(e.nombre.split(" ")[0])}</span>`).join("") || '<span class="hint">Da de alta al equipo primero.</span>'}</div></div>
       <div class="f-field full"><label>Nota</label><input id="tf-desc" value="${esc(t.descripcion || "")}" placeholder="Ej. check-out → check-in 16:00"></div>
+      ${!tareaId ? `
+      <div class="f-field"><label>Repetir (revisiones periódicas)</label>
+        <select id="tf-repetir"><option value="0">No repetir</option><option value="7">Cada semana</option><option value="14">Cada 2 semanas</option><option value="30">Cada mes</option></select></div>
+      <div class="f-field"><label>Nº de repeticiones</label><input id="tf-veces" type="number" min="2" max="26" value="8"></div>` : ""}
     </div></div>
     <div class="modal-foot">
       <button class="btn outline" onclick="closeModal()">Cancelar</button>
@@ -542,9 +558,20 @@ async function guardarTarea(id) {
     hora_inicio: fval("tf-hin") || null, hora_fin: fval("tf-hfin") || null,
     equipo_ids: $$("#tf-equipo .tg.on").map(t => +t.dataset.id), descripcion: fval("tf-desc") || null,
   };
-  const err = id ? await dbTareaEstado(id, payload) : await dbCrearTarea(payload);
-  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
-  closeModal(); toast(id ? "Servicio actualizado" : "Servicio planificado", P(payload.propiedad_id)?.nombre || "", ICON.check, "ok"); rerender();
+  if (id) {
+    const err = await dbTareaEstado(id, payload);
+    if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+    closeModal(); toast("Servicio actualizado", P(payload.propiedad_id)?.nombre || "", ICON.check, "ok"); return rerender();
+  }
+  const cada = +(fval("tf-repetir") || 0), veces = Math.min(26, Math.max(1, cada ? (fnum("tf-veces") || 1) : 1));
+  for (let k = 0; k < veces; k++) {
+    const err = await dbCrearTarea({ ...payload, fecha: addDias(payload.fecha, k * cada) });
+    if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  }
+  closeModal();
+  toast(veces > 1 ? `${veces} servicios planificados` : "Servicio planificado",
+    (P(payload.propiedad_id)?.nombre || "") + (veces > 1 ? ` · cada ${cada === 7 ? "semana" : cada === 14 ? "2 semanas" : "mes"}` : ""), ICON.check, "ok");
+  rerender();
 }
 async function delTarea(id) {
   if (!confirm("¿Eliminar este servicio?")) return;
@@ -579,7 +606,7 @@ function openChecklist(id) {
     </div>
     <div class="modal-foot">
       <button class="btn outline" onclick="closeModal();rerender()">Seguir luego</button>
-      <button class="btn primary" id="chk-fin" ${chk.length && chk.every(c => c.ok) ? "" : "disabled"} onclick="closeModal();tareaFinalizar(${id})">${ICON.check} Finalizar servicio</button>
+      <button class="btn primary" id="chk-fin" ${chk.length && chk.every(c => c.ok) ? "" : "disabled"} onclick="closeModal();openFinalizarModal(${id})">${ICON.check} Finalizar servicio</button>
     </div>`);
 }
 async function tickChk(id, i, el) {
@@ -594,13 +621,116 @@ async function tickChk(id, i, el) {
   const fin = $("#chk-fin"); if (fin) fin.disabled = !t.checklist.every(c => c.ok);
   await DB.sb.from("tareas").update({ checklist: t.checklist }).eq("id", id);
 }
-async function tareaFinalizar(id) {
-  const t = DB.tareas.find(x => x.id === id);
-  const err = await dbTareaEstado(id, { estado: "hecha", fin_real: new Date().toISOString(), ...(t ? { checklist: t.checklist } : {}) });
-  if (err) return toast("No se pudo finalizar", err, ICON.alert, "terra");
-  dbPingPosicion();
-  toast("¡Servicio terminado! ✨", "La oficina ya lo ve como hecho.", ICON.check, "ok"); rerender();
+/* finalizar con observaciones y fotos del estado (requisito del cliente) */
+function openFinalizarModal(id) {
+  const t = DB.tareas.find(x => x.id === id); if (!t) return;
+  openModal(`
+    <div class="modal-head"><h3>Terminar · ${esc(P(t.propiedad_id)?.nombre || "")}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body">
+      <div class="f-field" style="margin-bottom:12px"><label>¿Cómo ha quedado? Fotos del estado (opcional)</label>
+        <label class="file-btn">${ICON.camera} Hacer fotos<input type="file" id="fin-fotos" accept="image/*" capture="environment" multiple onchange="previewFotosFin(this)"></label>
+        <div class="thumbs" id="fin-thumbs"></div></div>
+      <div class="f-field"><label>Observaciones (opcional)</label>
+        <textarea id="fin-notas" placeholder="Ej. Todo en orden. La puerta de la terraza cuesta de cerrar."></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Volver</button>
+      <button class="btn primary" id="fin-go" onclick="doFinalizar(${id})">${ICON.check} Finalizar servicio</button>
+    </div>`);
 }
+function previewFotosFin(input) {
+  const box = $("#fin-thumbs"); box.innerHTML = "";
+  [...input.files].slice(0, 8).forEach(f => { const img = document.createElement("img"); img.src = URL.createObjectURL(f); box.appendChild(img); });
+}
+async function doFinalizar(id) {
+  const btn = $("#fin-go"); btn.disabled = true; btn.textContent = "Guardando…";
+  const files = $("#fin-fotos")?.files;
+  if (files?.length) {
+    const errF = await dbFotosTarea(id, files);
+    if (errF) { btn.disabled = false; btn.textContent = "Finalizar servicio"; return toast("No se pudieron subir las fotos", errF, ICON.alert, "terra"); }
+  }
+  const t = DB.tareas.find(x => x.id === id);
+  const err = await dbTareaEstado(id, {
+    estado: "hecha", fin_real: new Date().toISOString(),
+    notas_equipo: fval("fin-notas") || null, ...(t ? { checklist: t.checklist } : {}),
+  });
+  if (err) { btn.disabled = false; btn.textContent = "Finalizar servicio"; return toast("No se pudo finalizar", err, ICON.alert, "terra"); }
+  dbPingPosicion();
+  closeModal();
+  toast("¡Servicio terminado! ✨", "La oficina ya lo ve como hecho" + (files?.length ? ` con ${files.length} foto${files.length > 1 ? "s" : ""}` : "") + ".", ICON.check, "ok");
+  rerender();
+}
+
+/* trabajo espontáneo en una propiedad (fichaje asociado sin tarea previa) */
+function openTareaAdhoc() {
+  if (!DB.props.length) return toast("No hay propiedades", "", ICON.alert, "terra");
+  openModal(`
+    <div class="modal-head"><h3>Empezar trabajo en una propiedad</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Propiedad</label>
+        <select id="ah-prop">${DB.props.filter(p => p.activa).map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("")}</select></div>
+      <div class="f-field full"><label>Tipo de trabajo</label>
+        <select id="ah-tipo">${[["limpieza", "Limpieza"], ["mantenimiento", "Mantenimiento"], ["piscina", "Piscina / jardín"], ["otro", "Otro"]].map(x => `<option value="${x[0]}">${x[1]}</option>`).join("")}</select></div>
+    </div>
+    <p class="form-note">Queda registrada tu hora de llegada ahora mismo y tu posición; al terminar, la salida. La oficina lo ve al momento.</p></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" id="ah-go" onclick="crearTareaAdhoc()">${ICON.pin} He llegado, empezar</button>
+    </div>`);
+}
+async function crearTareaAdhoc() {
+  const me = miEmp(); if (!me) return;
+  const btn = $("#ah-go"); btn.disabled = true; btn.textContent = "Abriendo…";
+  const ahora = new Date();
+  const err = await dbCrearTarea({
+    propiedad_id: +fval("ah-prop"), fecha: hoyISO(), tipo: fval("ah-tipo"),
+    hora_inicio: ahora.toTimeString().slice(0, 5), equipo_ids: [me.id],
+    estado: "encurso", inicio_real: ahora.toISOString(), descripcion: "Trabajo abierto desde la app",
+  });
+  if (err) { btn.disabled = false; btn.textContent = "He llegado, empezar"; return toast("No se pudo abrir", err, ICON.alert, "terra"); }
+  dbPingPosicion();
+  closeModal();
+  toast("Trabajo abierto", "Marca el checklist y finaliza cuando acabes.", ICON.broom, "ok");
+  rerender();
+}
+
+/* compras / materiales */
+function openCompraRapida(propId) {
+  openModal(`
+    <div class="modal-head"><h3>Falta algo · ${esc(P(propId)?.nombre || "")}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body">
+      <div class="f-field"><label>¿Qué falta o hay que reponer?</label>
+        <input id="cr-texto" placeholder="Ej. 2 rollos de papel, gel de baño, bombilla salón" onkeydown="if(event.key==='Enter')doCompraRapida(${propId})"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="doCompraRapida(${propId})">${ICON.plus} Añadir a la lista</button>
+    </div>`);
+  setTimeout(() => $("#cr-texto")?.focus(), 150);
+}
+async function doCompraRapida(propId) {
+  const v = fval("cr-texto"); if (!v) return;
+  const err = await dbCrearCompra(propId, v);
+  if (err) return toast("No se pudo añadir", err, ICON.alert, "terra");
+  closeModal(); toast("Añadido a la lista de compras", v, ICON.check, "ok"); rerender();
+}
+async function crearCompraUI(propId) {
+  const v = fval("compra-nueva"); if (!v) return;
+  const err = await dbCrearCompra(propId, v);
+  if (err) return toast("No se pudo añadir", err, ICON.alert, "terra");
+  rerender();
+}
+async function marcarCompraUI(id, comprado) {
+  const err = await dbMarcarCompra(id, comprado);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  rerender();
+}
+async function borrarCompraUI(id) {
+  const err = await dbBorrarCompra(id);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  rerender();
+}
+const openPaperCostes = mes => paperModal(paperCostes(mes), "Horas y coste por propiedad · " + fmtMes(mes));
 
 /* ============================================================
    FICHAJE (empleado)

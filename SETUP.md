@@ -13,7 +13,7 @@ La app es 100 % estática (GitHub Pages / Vercel) y habla directamente con **Sup
 2. Pega el contenido completo de [`supabase/schema.sql`](supabase/schema.sql) y pulsa **Run**.
 3. Debe terminar con: `Schema Hygge instalado correctamente`. (Es seguro re-ejecutarlo.)
 
-Esto crea: tablas (propiedades, reservas, tareas, fichajes con GPS, incidencias con fotos, facturas, propietarios, empleados, ajustes), **seguridad por roles** (dirección ve todo; el equipo solo lo suyo), numeración de facturas correlativa, bucket privado de fotos y el tiempo real.
+Esto crea: tablas (propiedades con servicios contratados, reservas, tareas con fotos de estado, fichajes con GPS, incidencias con fotos, lista de compras, facturas, propietarios, empleados con datos de contrato, ajustes), **seguridad por roles** (dirección ve todo; el equipo solo lo suyo), numeración de facturas correlativa, bucket privado de fotos y el tiempo real.
 
 ## 3 · Ajustes de autenticación (1 min)
 

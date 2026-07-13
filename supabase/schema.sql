@@ -109,6 +109,22 @@ create table if not exists tareas (
   created_at   timestamptz not null default now()
 );
 
+-- ampliaciones v1.1 (requisitos del cliente) — seguras de re-ejecutar
+alter table propiedades add column if not exists servicios text[] not null default '{}';
+alter table tareas add column if not exists fotos text[] not null default '{}';
+alter table tareas add column if not exists notas_equipo text;
+
+-- lista de compras / materiales pendientes por propiedad
+create table if not exists compras (
+  id           bigint generated always as identity primary key,
+  propiedad_id bigint not null references propiedades(id) on delete cascade,
+  texto        text not null,
+  creado_por   text,
+  estado       text not null default 'pendiente' check (estado in ('pendiente','comprado')),
+  created_at   timestamptz not null default now(),
+  comprado_at  timestamptz
+);
+
 create table if not exists fichajes (
   id          bigint generated always as identity primary key,
   empleado_id bigint not null references empleados(id) on delete cascade,
@@ -182,6 +198,7 @@ create table if not exists ajustes (
 -- valores iniciales
 insert into ajustes (clave, valor) values
   ('empresa', '{"nombre":"Hygge Services Mallorca S.L.","cif":"","direccion":"Costa i Llobera 53, Artà · Illes Balears 07570","telefono":"+34 655 958 897","email":"info@hyggeservicesmallorca.com","iban":""}'),
+  ('servicios_catalogo', '["Alquiler vacacional","Consigna de llaves","Limpieza","Mantenimiento de piscina","Mantenimiento de jardín"]'),
   ('checklist_base', '["Ventilar y revisar desperfectos (fotos si hay daños)","Retirar ropa usada y contar juegos para lavandería","Cocina: electrodomésticos, vajilla y superficies","Baños: sanitarios, mampara, espejos y reposición","Dormitorios: hacer camas con juego limpio","Suelos de toda la vivienda y terrazas","Reponer kit de bienvenida","Foto final de cada estancia"]'),
   ('factura_serie', '{"prefijo":"HSM","n":0}'),
   ('tarifas', '{"iva":21}')
@@ -197,6 +214,7 @@ create index if not exists idx_fichajes_fecha on fichajes (fecha);
 create index if not exists idx_fichajes_emp on fichajes (empleado_id, fecha);
 create index if not exists idx_incidencias_estado on incidencias (estado);
 create index if not exists idx_facturas_fecha on facturas (fecha);
+create index if not exists idx_compras_prop on compras (propiedad_id, estado);
 
 -- ---------- FUNCIONES AUXILIARES ----------
 
@@ -341,7 +359,8 @@ create policy reservas_write on reservas for all to authenticated
 drop policy if exists tareas_select on tareas;
 create policy tareas_select on tareas for select to authenticated using (true);
 drop policy if exists tareas_insert on tareas;
-create policy tareas_insert on tareas for insert to authenticated with check (is_direccion());
+create policy tareas_insert on tareas for insert to authenticated
+  with check (is_direccion() or my_emp() = any(equipo_ids));  -- el equipo puede abrirse una tarea ad-hoc en una propiedad
 drop policy if exists tareas_delete on tareas;
 create policy tareas_delete on tareas for delete to authenticated using (is_direccion());
 drop policy if exists tareas_update on tareas;
@@ -392,6 +411,17 @@ create policy inc_eventos_select on incidencia_eventos for select to authenticat
 drop policy if exists inc_eventos_insert on incidencia_eventos;
 create policy inc_eventos_insert on incidencia_eventos for insert to authenticated with check (true);
 
+-- compras: el equipo añade y marca compradas; borrar, dirección
+alter table compras enable row level security;
+drop policy if exists compras_select on compras;
+create policy compras_select on compras for select to authenticated using (true);
+drop policy if exists compras_insert on compras;
+create policy compras_insert on compras for insert to authenticated with check (true);
+drop policy if exists compras_update on compras;
+create policy compras_update on compras for update to authenticated using (true) with check (true);
+drop policy if exists compras_delete on compras;
+create policy compras_delete on compras for delete to authenticated using (is_direccion());
+
 -- facturas y ajustes
 drop policy if exists facturas_all on facturas;
 create policy facturas_all on facturas for all to authenticated
@@ -427,6 +457,7 @@ do $$ begin alter publication supabase_realtime add table fichaje_pausas;  excep
 do $$ begin alter publication supabase_realtime add table posiciones;      exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table tareas;          exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table incidencias;     exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table compras;         exception when duplicate_object then null; end $$;
 
 -- listo ✔
 select 'Schema Hygge instalado correctamente' as resultado;

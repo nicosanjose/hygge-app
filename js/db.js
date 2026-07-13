@@ -8,7 +8,7 @@ const DB = {
   session: null, profile: null,          // profile: {id, nombre, rol, empleado_id}
   emp: [], empDatos: [], props: [], owners: [], reservas: [], tareas: [],
   fichajes: [], pausas: [], posiciones: [], incidencias: [], eventos: [],
-  facturas: [], ajustes: {}, pendientes: [],
+  facturas: [], compras: [], ajustes: {}, pendientes: [],
   fotoUrls: {},                          // path -> signed url (caché)
   cargado: false,
 };
@@ -63,7 +63,7 @@ const limpiaErr = m => (m || "").replace(/^.*?exception:?\s*/i, "").replace("new
 async function dbCargarTodo() {
   const desde = addDias(hoyISO(), -400), hasta = addDias(hoyISO(), 400);
   const q = (t, sel, mod) => { let x = DB.sb.from(t).select(sel || "*"); if (mod) x = mod(x); return x; };
-  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, aj, pend] = await Promise.all([
+  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aj, pend] = await Promise.all([
     q("empleados", "*", x => x.order("nombre")),
     q("empleados_datos", "*"),
     q("propiedades", "*", x => x.order("nombre")),
@@ -76,6 +76,7 @@ async function dbCargarTodo() {
     q("incidencias", "*", x => x.order("created_at", { ascending: false })),
     q("incidencia_eventos", "*", x => x.order("created_at")),
     q("facturas", "*", x => x.order("created_at", { ascending: false })),
+    q("compras", "*", x => x.order("created_at", { ascending: false })),
     q("ajustes", "*"),
     DB.sb.from("profiles").select("*").is("rol", null),
   ]);
@@ -83,7 +84,7 @@ async function dbCargarTodo() {
   DB.props = props.data || []; DB.owners = owners.data || [];
   DB.reservas = res.data || []; DB.tareas = tar.data || []; DB.fichajes = fic.data || [];
   DB.pausas = pau.data || []; DB.posiciones = pos.data || []; DB.incidencias = inc.data || [];
-  DB.eventos = ev.data || []; DB.facturas = fac.data || [];
+  DB.eventos = ev.data || []; DB.facturas = fac.data || []; DB.compras = com.data || [];
   DB.ajustes = Object.fromEntries((aj.data || []).map(a => [a.clave, a.valor]));
   DB.pendientes = pend.data || [];
   DB.cargado = true;
@@ -100,6 +101,7 @@ function dbRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "posiciones" }, dbRecargaSuave)
     .on("postgres_changes", { event: "*", schema: "public", table: "tareas" }, dbRecargaSuave)
     .on("postgres_changes", { event: "*", schema: "public", table: "incidencias" }, dbRecargaSuave)
+    .on("postgres_changes", { event: "*", schema: "public", table: "compras" }, dbRecargaSuave)
     .subscribe();
 }
 
@@ -136,6 +138,29 @@ function horasEmpleadoRango(empId, desde, hasta) {
   return msAHoras(DB.fichajes
     .filter(f => f.empleado_id === empId && f.fecha >= desde && f.fecha <= hasta)
     .reduce((a, f) => a + horasDeFichaje(f), 0));
+}
+
+/* horas y coste de trabajo POR PROPIEDAD (lo que el cliente quiere medir) */
+function horasTarea(t) {
+  if (t.inicio_real && t.fin_real) return Math.max(0, (new Date(t.fin_real) - new Date(t.inicio_real)) / 36e5);
+  if (t.hora_inicio && t.hora_fin) {
+    const [h1, m1] = t.hora_inicio.split(":").map(Number), [h2, m2] = t.hora_fin.split(":").map(Number);
+    return Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
+  }
+  return 0;
+}
+function costeTarea(t) {
+  const tarifas = (t.equipo_ids || []).reduce((a, id) => a + (+ED(id).tarifa_hora || 0), 0);
+  return horasTarea(t) * tarifas;
+}
+function tareasPropMes(propId, mes) {
+  return DB.tareas.filter(t => t.propiedad_id === propId && t.estado === "hecha" && t.fecha.startsWith(mes));
+}
+function horasPropMes(propId, mes) {
+  return Math.round(tareasPropMes(propId, mes).reduce((a, t) => a + horasTarea(t) * Math.max(1, (t.equipo_ids || []).length), 0) * 10) / 10;
+}
+function costePropMes(propId, mes) {
+  return tareasPropMes(propId, mes).reduce((a, t) => a + costeTarea(t), 0);
 }
 
 /* posiciones reales en lat/lng (mapa Leaflet de Mallorca) */
@@ -284,6 +309,35 @@ async function dbPausa() {
   if (r.error) return limpiaErr(r.error.message);
   await dbCargarTodo(); return null;
 }
+async function dbCrearCompra(propiedad_id, texto) {
+  const { error } = await DB.sb.from("compras").insert({ propiedad_id, texto, creado_por: DB.profile?.nombre || null });
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbMarcarCompra(id, comprado) {
+  const { error } = await DB.sb.from("compras").update({
+    estado: comprado ? "comprado" : "pendiente", comprado_at: comprado ? new Date().toISOString() : null,
+  }).eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbBorrarCompra(id) {
+  const { error } = await DB.sb.from("compras").delete().eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbFotosTarea(tareaId, files) {
+  const t = DB.tareas.find(x => x.id === tareaId); if (!t) return "Tarea no encontrada";
+  const nuevas = [];
+  for (const file of files || []) {
+    const path = `tareas/${tareaId}/${Date.now()}_${Math.random().toString(36).slice(2, 7)}.jpg`;
+    if (await dbSubirFoto(path, file)) nuevas.push(path);
+  }
+  if (!nuevas.length) return null;
+  const { error } = await DB.sb.from("tareas").update({ fotos: [...(t.fotos || []), ...nuevas] }).eq("id", tareaId);
+  return error ? limpiaErr(error.message) : null;
+}
+
 async function dbCrearIncidencia({ propiedad_id, titulo, descripcion, prioridad }, files) {
   const me = miEmp();
   const fotos = [];
