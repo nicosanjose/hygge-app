@@ -953,3 +953,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 .week-chip.encurso{background:var(--blue-soft);border-color:#cfe0ec;color:var(--blue)}
 .tbl.week td{vertical-align:top;min-width:112px;padding:8px 8px}
 .tbl.week th{text-transform:none;letter-spacing:.04em;font-size:11.5px}
+
+/* v1.2 · fotos de fichaje */
+.fich-fotos{display:inline-flex;gap:5px;align-items:center}
+.fich-fotos img{width:34px;height:34px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;transition:transform .15s}
+.fich-fotos a:hover img{transform:scale(1.5)}

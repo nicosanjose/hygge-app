@@ -46,7 +46,7 @@ Esto crea: tablas (propiedades con servicios contratados, reservas, tareas con f
 ## 7 · Rellenar datos reales (orden recomendado)
 
 1. **Ajustes** → datos de empresa (salen en informes y facturas) y checklist de limpieza.
-2. **Trabajadores** → cada persona con sus datos de contrato (DNI, IBAN, relación laboral, tarifa €/h) y sus documentos; desde su ficha se genera su factura (autónomos) o recibo de horas (contrato) de cada mes. Los datos personales solo los ve dirección.
+2. **Trabajadores** → cada persona con sus datos de contrato; su pestaña **Asistencia** registra el absentismo (detección automática de días con trabajo y sin fichaje, justificantes adjuntos) y en Informes está el **informe de absentismo** con gráficas y análisis automático. El fichaje exige **foto de entrada y salida** (se puede desactivar en Ajustes) (DNI, IBAN, relación laboral, tarifa €/h) y sus documentos; desde su ficha se genera su factura (autónomos) o recibo de horas (contrato) de cada mes. Los datos personales solo los ve dirección.
 3. **Propietarios** → los dueños.
 4. **Propiedades** → cada casa con su propietario, licencia, **tarifa de gestión €/mes** y **tarifa por limpieza €** (alimentan las facturas y liquidaciones), foto y documentos.
 5. **Calendario de cada propiedad** → reservas (con importe si quieres liquidaciones automáticas).

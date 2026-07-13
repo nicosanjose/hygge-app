@@ -114,6 +114,20 @@ alter table propiedades add column if not exists servicios text[] not null defau
 alter table tareas add column if not exists fotos text[] not null default '{}';
 alter table tareas add column if not exists notas_equipo text;
 
+-- v1.2 · control de asistencia (absentismo)
+create table if not exists ausencias (
+  id                bigint generated always as identity primary key,
+  empleado_id       bigint not null references empleados(id) on delete cascade,
+  fecha             date not null,
+  tipo              text not null default 'injustificada' check (tipo in ('injustificada','justificada')),
+  motivo            text,
+  origen            text not null default 'manual' check (origen in ('auto','manual')),
+  justificante_path text,
+  creado_por        text,
+  created_at        timestamptz not null default now(),
+  unique (empleado_id, fecha)
+);
+
 -- lista de compras / materiales pendientes por propiedad
 create table if not exists compras (
   id           bigint generated always as identity primary key,
@@ -137,6 +151,10 @@ create table if not exists fichajes (
   lng_salida  numeric(9,6),
   lugar       text
 );
+
+-- v1.2 · prueba gráfica del fichaje (foto de entrada y de salida)
+alter table fichajes add column if not exists foto_entrada_path text;
+alter table fichajes add column if not exists foto_salida_path text;
 
 create table if not exists fichaje_pausas (
   id         bigint generated always as identity primary key,
@@ -199,6 +217,7 @@ create table if not exists ajustes (
 insert into ajustes (clave, valor) values
   ('empresa', '{"nombre":"Hygge Services Mallorca S.L.","cif":"","direccion":"Costa i Llobera 53, Artà · Illes Balears 07570","telefono":"+34 655 958 897","email":"info@hyggeservicesmallorca.com","iban":""}'),
   ('servicios_catalogo', '["Alquiler vacacional","Consigna de llaves","Limpieza","Mantenimiento de piscina","Mantenimiento de jardín"]'),
+  ('fichaje', '{"foto_obligatoria": true}'),
   ('checklist_base', '["Ventilar y revisar desperfectos (fotos si hay daños)","Retirar ropa usada y contar juegos para lavandería","Cocina: electrodomésticos, vajilla y superficies","Baños: sanitarios, mampara, espejos y reposición","Dormitorios: hacer camas con juego limpio","Suelos de toda la vivienda y terrazas","Reponer kit de bienvenida","Foto final de cada estancia"]'),
   ('factura_serie', '{"prefijo":"HSM","n":0}'),
   ('tarifas', '{"iva":21}')
@@ -215,6 +234,7 @@ create index if not exists idx_fichajes_emp on fichajes (empleado_id, fecha);
 create index if not exists idx_incidencias_estado on incidencias (estado);
 create index if not exists idx_facturas_fecha on facturas (fecha);
 create index if not exists idx_compras_prop on compras (propiedad_id, estado);
+create index if not exists idx_ausencias_emp on ausencias (empleado_id, fecha);
 
 -- ---------- FUNCIONES AUXILIARES ----------
 
@@ -411,6 +431,15 @@ create policy inc_eventos_select on incidencia_eventos for select to authenticat
 drop policy if exists inc_eventos_insert on incidencia_eventos;
 create policy inc_eventos_insert on incidencia_eventos for insert to authenticated with check (true);
 
+-- ausencias: dirección gestiona; cada trabajador puede ver las suyas
+alter table ausencias enable row level security;
+drop policy if exists ausencias_select on ausencias;
+create policy ausencias_select on ausencias for select to authenticated
+  using (is_direccion() or empleado_id = my_emp());
+drop policy if exists ausencias_write on ausencias;
+create policy ausencias_write on ausencias for all to authenticated
+  using (is_direccion()) with check (is_direccion());
+
 -- compras: el equipo añade y marca compradas; borrar, dirección
 alter table compras enable row level security;
 drop policy if exists compras_select on compras;
@@ -445,7 +474,7 @@ create policy fotos_insert on storage.objects for insert to authenticated
 drop policy if exists fotos_select on storage.objects;
 create policy fotos_select on storage.objects for select to authenticated
   using (bucket_id = 'fotos'
-         and (is_direccion() or (storage.foldername(name))[1] not in ('documentos','empleados')));
+         and (is_direccion() or (storage.foldername(name))[1] not in ('documentos','empleados','fichajes','ausencias')));
 drop policy if exists fotos_delete on storage.objects;
 create policy fotos_delete on storage.objects for delete to authenticated
   using (bucket_id = 'fotos' and is_direccion());

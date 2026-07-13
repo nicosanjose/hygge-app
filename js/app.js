@@ -731,30 +731,113 @@ async function borrarCompraUI(id) {
   rerender();
 }
 const openPaperCostes = mes => paperModal(paperCostes(mes), "Horas y coste por propiedad · " + fmtMes(mes));
+const openPaperAbsentismo = mes => paperModal(paperAbsentismo(mes), "Absentismo y asistencia · " + fmtMes(mes));
+
+/* ============================================================
+   AUSENCIAS (absentismo)
+   ============================================================ */
+function openAusenciaForm(empId, fecha, origen) {
+  const e = S(empId); if (!e) return;
+  openModal(`
+    <div class="modal-head"><h3>Registrar ausencia · ${esc(e.nombre)}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field"><label>Fecha *</label><input id="au-fecha" type="date" value="${fecha || hoyISO()}" max="${hoyISO()}"></div>
+      <div class="f-field"><label>Tipo</label>
+        <select id="au-tipo"><option value="injustificada">Sin justificar</option><option value="justificada">Justificada</option></select></div>
+      <div class="f-field full"><label>Motivo / observaciones</label><input id="au-motivo" placeholder="Ej. no acudió al turno y no avisó · baja médica · permiso"></div>
+      <div class="f-field full"><label>Justificante (opcional)</label>
+        <div class="field-file"><label class="file-btn">${ICON.plus} Adjuntar documento<input type="file" id="au-just"></label>
+        <span class="hint" id="au-just-nombre"></span></div></div>
+    </div>
+    ${origen === "auto" ? `<p class="form-note">Detectada automáticamente: tenía trabajo asignado ese día y no hay ningún fichaje.</p>` : ""}
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn danger" id="au-go" onclick="guardarAusencia(${empId},'${origen || "manual"}')">${ICON.check} Registrar</button>
+    </div>`);
+  $("#au-just")?.addEventListener("change", ev => { $("#au-just-nombre").textContent = ev.target.files[0]?.name || ""; });
+}
+async function guardarAusencia(empId, origen) {
+  const fecha = fval("au-fecha"); if (!fecha) return;
+  const btn = $("#au-go"); btn.disabled = true; btn.textContent = "Guardando…";
+  const err = await dbCrearAusencia(empId, fecha, fval("au-tipo"), fval("au-motivo"), origen, $("#au-just")?.files[0]);
+  if (err) { btn.disabled = false; btn.textContent = "Registrar"; return toast("No se pudo registrar", err, ICON.alert, "terra"); }
+  closeModal();
+  toast("Ausencia registrada", fmtCorto(fecha) + " · " + (fval("au-tipo") === "justificada" ? "justificada" : "sin justificar"), ICON.check, "ok");
+  rerender();
+}
+function openJustificarForm(id) {
+  const a = DB.ausencias.find(x => x.id === id); if (!a) return;
+  openModal(`
+    <div class="modal-head"><h3>Justificar ausencia · ${fmtCorto(a.fecha)}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body">
+      <div class="f-field" style="margin-bottom:12px"><label>Motivo *</label>
+        <input id="ju-motivo" value="${esc(a.motivo || "")}" placeholder="Ej. baja médica con parte, permiso retribuido…"></div>
+      <div class="f-field"><label>Justificante (opcional)</label>
+        <div class="field-file"><label class="file-btn">${ICON.plus} Adjuntar documento<input type="file" id="ju-just"></label>
+        <span class="hint" id="ju-just-nombre"></span></div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="justificarAusenciaUI(${id})">${ICON.check} Marcar justificada</button>
+    </div>`);
+  $("#ju-just")?.addEventListener("change", ev => { $("#ju-just-nombre").textContent = ev.target.files[0]?.name || ""; });
+}
+async function justificarAusenciaUI(id) {
+  const motivo = fval("ju-motivo");
+  if (!motivo) return toast("Falta el motivo", "", ICON.alert, "terra");
+  const err = await dbJustificarAusencia(id, motivo, $("#ju-just")?.files[0]);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  closeModal(); toast("Ausencia justificada", motivo, ICON.check, "ok"); rerender();
+}
+async function borrarAusenciaUI(id) {
+  if (!confirm("¿Eliminar este registro de ausencia?")) return;
+  const err = await dbBorrarAusencia(id);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Registro eliminado", "", ICON.trash); rerender();
+}
 
 /* ============================================================
    FICHAJE (empleado)
    ============================================================ */
-async function ficharEntradaUI() {
-  const btn = $("#btn-fichar"); if (btn) { btn.disabled = true; btn.textContent = "Fichando…"; }
-  const err = await dbFicharEntrada();
-  if (err) { toast("No se pudo fichar", err, ICON.alert, "terra"); rerender(); return; }
-  toast("Entrada fichada", new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) + " · con tu ubicación", ICON.clock, "ok");
+function modalFotoFichaje(tipo) {
+  // tipo: 'entrada' | 'salida' — con foto obligatoria si así está configurado
+  const esEntrada = tipo === "entrada";
+  openModal(`
+    <div class="modal-head"><h3>Fichar ${tipo}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body">
+      <p style="font-size:14px;margin-bottom:14px">Son las <b>${new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>.
+      ${fotoFichajeObligatoria() ? `Haz una foto ${esEntrada ? "del lugar donde empiezas" : "de cómo queda todo al salir"} — junto con tu ubicación, confirma el fichaje.` : ""}</p>
+      ${fotoFichajeObligatoria() ? `
+      <div class="f-field"><label>Foto de ${tipo} *</label>
+        <label class="file-btn">${ICON.camera} Hacer foto<input type="file" id="ff-foto" accept="image/*" capture="environment" onchange="previewFotoFichaje(this)"></label>
+        <div class="thumbs" id="ff-thumb"></div></div>` : ""}
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">${esEntrada ? "Cancelar" : "Seguir trabajando"}</button>
+      <button class="btn primary" id="ff-go" ${fotoFichajeObligatoria() ? "disabled" : ""} onclick="doFichar('${tipo}')">${ICON.clock} Fichar ${tipo}</button>
+    </div>`);
+}
+function previewFotoFichaje(input) {
+  const box = $("#ff-thumb"); box.innerHTML = "";
+  if (input.files[0]) {
+    const img = document.createElement("img"); img.src = URL.createObjectURL(input.files[0]); box.appendChild(img);
+    $("#ff-go").disabled = false;
+  } else $("#ff-go").disabled = true;
+}
+async function doFichar(tipo) {
+  const foto = $("#ff-foto")?.files[0] || null;
+  if (fotoFichajeObligatoria() && !foto) return toast("Falta la foto", "Haz la foto para confirmar el fichaje.", ICON.camera, "terra");
+  const btn = $("#ff-go"); btn.disabled = true; btn.textContent = "Fichando…";
+  const err = tipo === "entrada" ? await dbFicharEntrada(foto) : await dbFicharSalida(foto);
+  if (err) { btn.disabled = false; btn.textContent = "Fichar " + tipo; return toast("No se pudo fichar", err, ICON.alert, "terra"); }
+  closeModal();
+  toast(tipo === "entrada" ? "Entrada fichada" : "Salida fichada",
+    new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) + " · con foto y ubicación" + (tipo === "salida" ? ". ¡Hasta mañana!" : ""), ICON.check, "ok");
   rerender();
 }
-function ficharSalidaUI() {
-  openModal(`
-    <div class="modal-head"><h3>Fichar salida</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
-    <div class="modal-body"><p style="font-size:14px">¿Cerrar la jornada de hoy a las <b>${new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>?</p></div>
-    <div class="modal-foot"><button class="btn outline" onclick="closeModal()">Seguir trabajando</button>
-    <button class="btn primary" onclick="doFicharSalida()">${ICON.clock} Fichar salida</button></div>`);
-}
-async function doFicharSalida() {
-  closeModal();
-  const err = await dbFicharSalida();
-  if (err) return toast("No se pudo", err, ICON.alert, "terra");
-  toast("Salida fichada", "Jornada guardada. ¡Hasta mañana!", ICON.check, "ok"); rerender();
-}
+function ficharEntradaUI() { modalFotoFichaje("entrada"); }
+function ficharSalidaUI() { modalFotoFichaje("salida"); }
 async function pausaUI() {
   const err = await dbPausa();
   if (err) return toast("No se pudo", err, ICON.alert, "terra");
@@ -911,6 +994,13 @@ async function quitarChecklist(i) {
   const err = await dbSetAjuste("checklist_base", chk);
   if (err) return toast("No se pudo", err, ICON.alert, "terra");
   rerender();
+}
+async function toggleFotoFichaje(btn) {
+  const nuevo = !fotoFichajeObligatoria();
+  const err = await dbSetAjuste("fichaje", { ...(DB.ajustes.fichaje || {}), foto_obligatoria: nuevo });
+  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  btn.classList.toggle("on", nuevo);
+  toast(nuevo ? "Foto obligatoria activada" : "Foto obligatoria desactivada", "Aplica al próximo fichaje del equipo.", ICON.camera, "ok");
 }
 async function activarDireccionUI(uid) {
   const err = await dbActivarDireccion(uid);

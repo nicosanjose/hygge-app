@@ -8,7 +8,7 @@ const DB = {
   session: null, profile: null,          // profile: {id, nombre, rol, empleado_id}
   emp: [], empDatos: [], props: [], owners: [], reservas: [], tareas: [],
   fichajes: [], pausas: [], posiciones: [], incidencias: [], eventos: [],
-  facturas: [], compras: [], ajustes: {}, pendientes: [],
+  facturas: [], compras: [], ausencias: [], ajustes: {}, pendientes: [],
   fotoUrls: {},                          // path -> signed url (caché)
   cargado: false,
 };
@@ -63,7 +63,7 @@ const limpiaErr = m => (m || "").replace(/^.*?exception:?\s*/i, "").replace("new
 async function dbCargarTodo() {
   const desde = addDias(hoyISO(), -400), hasta = addDias(hoyISO(), 400);
   const q = (t, sel, mod) => { let x = DB.sb.from(t).select(sel || "*"); if (mod) x = mod(x); return x; };
-  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aj, pend] = await Promise.all([
+  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aus, aj, pend] = await Promise.all([
     q("empleados", "*", x => x.order("nombre")),
     q("empleados_datos", "*"),
     q("propiedades", "*", x => x.order("nombre")),
@@ -77,6 +77,7 @@ async function dbCargarTodo() {
     q("incidencia_eventos", "*", x => x.order("created_at")),
     q("facturas", "*", x => x.order("created_at", { ascending: false })),
     q("compras", "*", x => x.order("created_at", { ascending: false })),
+    q("ausencias", "*", x => x.order("fecha", { ascending: false })),
     q("ajustes", "*"),
     DB.sb.from("profiles").select("*").is("rol", null),
   ]);
@@ -85,6 +86,7 @@ async function dbCargarTodo() {
   DB.reservas = res.data || []; DB.tareas = tar.data || []; DB.fichajes = fic.data || [];
   DB.pausas = pau.data || []; DB.posiciones = pos.data || []; DB.incidencias = inc.data || [];
   DB.eventos = ev.data || []; DB.facturas = fac.data || []; DB.compras = com.data || [];
+  DB.ausencias = aus.data || [];
   DB.ajustes = Object.fromEntries((aj.data || []).map(a => [a.clave, a.valor]));
   DB.pendientes = pend.data || [];
   DB.cargado = true;
@@ -277,28 +279,70 @@ async function dbBorrarTarea(id) {
   if (error) return limpiaErr(error.message);
   await dbCargarTodo(); return null;
 }
-async function dbFicharEntrada() {
+const fotoFichajeObligatoria = () => DB.ajustes.fichaje?.foto_obligatoria !== false;
+async function dbFicharEntrada(fotoFile) {
   const me = miEmp(); if (!me) return "Tu cuenta no está vinculada a una ficha de empleado";
   if (fichajeAbierto(me.id)) return "Ya tienes la jornada abierta";
+  let fotoPath = null;
+  if (fotoFile) fotoPath = await dbSubirFoto(`fichajes/${me.id}/${Date.now()}_in.jpg`, fotoFile);
   const gps = await getGPS();
   const { error } = await DB.sb.from("fichajes").insert({
-    empleado_id: me.id, fecha: hoyISO(), lat: gps?.lat, lng: gps?.lng,
+    empleado_id: me.id, fecha: hoyISO(), lat: gps?.lat, lng: gps?.lng, foto_entrada_path: fotoPath,
   });
   if (error) return limpiaErr(error.message);
   if (gps) await DB.sb.from("posiciones").upsert({ empleado_id: me.id, lat: gps.lat, lng: gps.lng, updated_at: new Date().toISOString() });
   await dbCargarTodo(); return null;
 }
-async function dbFicharSalida() {
+async function dbFicharSalida(fotoFile) {
   const me = miEmp(); const f = me && fichajeAbierto(me.id);
   if (!f) return "No tienes jornada abierta";
   const p = pausaAbierta(f.id);
   if (p) await DB.sb.from("fichaje_pausas").update({ fin: new Date().toISOString() }).eq("id", p.id);
+  let fotoPath = null;
+  if (fotoFile) fotoPath = await dbSubirFoto(`fichajes/${me.id}/${Date.now()}_out.jpg`, fotoFile);
   const gps = await getGPS();
   const { error } = await DB.sb.from("fichajes").update({
-    salida: new Date().toISOString(), lat_salida: gps?.lat, lng_salida: gps?.lng,
+    salida: new Date().toISOString(), lat_salida: gps?.lat, lng_salida: gps?.lng, foto_salida_path: fotoPath,
   }).eq("id", f.id);
   if (error) return limpiaErr(error.message);
   await dbCargarTodo(); return null;
+}
+
+/* ---------- absentismo ---------- */
+async function dbCrearAusencia(empleado_id, fecha, tipo, motivo, origen, justFile) {
+  let justificante_path = null;
+  if (justFile) justificante_path = await dbSubirFoto(`ausencias/${empleado_id}/${Date.now()}_${justFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`, justFile);
+  const { error } = await DB.sb.from("ausencias").insert({
+    empleado_id, fecha, tipo, motivo: motivo || null, origen: origen || "manual",
+    justificante_path, creado_por: DB.profile?.nombre || null,
+  });
+  if (error) return limpiaErr(error.message.includes("duplicate") ? "Ya hay una ausencia registrada ese día" : error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbJustificarAusencia(id, motivo, justFile) {
+  const a = DB.ausencias.find(x => x.id === id); if (!a) return "No encontrada";
+  let justificante_path = a.justificante_path;
+  if (justFile) justificante_path = await dbSubirFoto(`ausencias/${a.empleado_id}/${Date.now()}_${justFile.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`, justFile);
+  const { error } = await DB.sb.from("ausencias").update({ tipo: "justificada", motivo: motivo || a.motivo, justificante_path }).eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbBorrarAusencia(id) {
+  const { error } = await DB.sb.from("ausencias").delete().eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+/* días pasados con trabajo asignado, sin fichaje y sin ausencia registrada */
+function diasSinFichar(empId, desde) {
+  const dias = [...new Set(DB.tareas
+    .filter(t => (t.equipo_ids || []).includes(empId) && t.fecha >= (desde || addDias(hoyISO(), -90)) && t.fecha < hoyISO())
+    .map(t => t.fecha))];
+  return dias.filter(d =>
+    !DB.fichajes.some(f => f.empleado_id === empId && f.fecha === d) &&
+    !DB.ausencias.some(a => a.empleado_id === empId && a.fecha === d)).sort().reverse();
+}
+function ausenciasDe(empId, desde) {
+  return DB.ausencias.filter(a => a.empleado_id === empId && (!desde || a.fecha >= desde));
 }
 async function dbPausa() {
   const me = miEmp(); const f = me && fichajeAbierto(me.id);

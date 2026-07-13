@@ -164,6 +164,10 @@ function viewDashboard() {
   entradas.filter(r => !tHoy.some(t => t.propiedad_id === r.propiedad_id && t.tipo === "limpieza")).slice(0, 2).forEach(r =>
     avisos.push({ ic: "blue", icon: ICON.cal, b: `Entrada hoy sin limpieza planificada`, s: esc(P(r.propiedad_id)?.nombre || ""), go: "plan" }));
   if (DB.pendientes.length) avisos.push({ ic: "lilac", icon: ICON.users, b: `${DB.pendientes.length} cuenta(s) pendiente(s) de activar`, s: "Revisa Ajustes → Usuarios", go: "ajustes" });
+  const inj30 = DB.ausencias.filter(a => a.tipo === "injustificada" && a.fecha >= addDias(hoyISO(), -30));
+  const porRevisar = DB.emp.filter(e => e.activo).reduce((a, e) => a + diasSinFichar(e.id, addDias(hoyISO(), -30)).length, 0);
+  if (inj30.length) avisos.push({ ic: "terra", icon: ICON.alert, b: `${inj30.length} ausencia${inj30.length > 1 ? "s" : ""} sin justificar · 30 días`, s: [...new Set(inj30.map(a => S(a.empleado_id)?.nombre.split(" ")[0]))].filter(Boolean).join(", "), go: "trabajadores" });
+  else if (porRevisar) avisos.push({ ic: "gold", icon: ICON.clock, b: `${porRevisar} día${porRevisar > 1 ? "s" : ""} con trabajo asignado sin fichaje`, s: "Revísalos en la ficha de cada trabajador (Asistencia)", go: "trabajadores" });
   const meses12 = Array.from({ length: 12 }, (_, i) => addMeses(mes, i - 11));
   return `
   <div class="dash-hero">
@@ -592,15 +596,18 @@ function viewTrabajadores() {
     <button class="btn primary sm" onclick="openEmpForm()">${ICON.plus} Añadir trabajador</button>
   </div>
   <div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Trabajador</th><th>Puesto</th><th>Relación</th><th>Teléfono</th><th class="num">Horas mes</th><th class="num">Tarifa</th><th>Estado</th><th></th></tr></thead>
-    <tbody>${DB.emp.map(e => { const d = ED(e.id); return `
+    <thead><tr><th>Trabajador</th><th>Puesto</th><th>Relación</th><th class="num">Horas mes</th><th class="num">Tarifa</th><th>Ausencias 90 d</th><th>Estado</th><th></th></tr></thead>
+    <tbody>${DB.emp.map(e => { const d = ED(e.id);
+      const inj = ausenciasDe(e.id, addDias(hoyISO(), -90)).filter(a => a.tipo === "injustificada").length;
+      const pend = diasSinFichar(e.id).length;
+      return `
       <tr data-trab="${e.id}" style="cursor:pointer">
         <td><span class="who">${ava(e)} ${esc(e.nombre)}</span></td>
         <td>${esc(e.rol_laboral)}</td>
         <td>${d.tipo_relacion === "autonomo" ? '<span class="chip gold">Autónomo</span>' : '<span class="chip sage">Contrato</span>'}</td>
-        <td>${esc(e.telefono || "—")}</td>
         <td class="num"><b>${horasMes(e).toLocaleString("es-ES")} h</b></td>
         <td class="num">${+d.tarifa_hora ? eur(d.tarifa_hora) + "/h" : "—"}</td>
+        <td>${inj ? `<span class="chip terra"><i class="d"></i>${inj} sin justificar</span>` : pend ? `<span class="chip gold"><i class="d"></i>${pend} por revisar</span>` : '<span class="chip ok">Al día</span>'}</td>
         <td>${e.activo ? '<span class="chip ok">Activo</span>' : '<span class="chip gray">De baja</span>'}</td>
         <td class="num" style="white-space:nowrap">
           <button class="btn xs outline" onclick="event.stopPropagation();bajaTrabajador(${e.id})">${e.activo ? "Dar de baja" : "Reactivar"}</button>
@@ -618,8 +625,50 @@ function viewTrabajadorDetail() {
   const iniSemana = addDias(hoyISO(), -((new Date().getDay() + 6) % 7));
   const horasMes = horasEmpleadoRango(e.id, ini, fin);
   const tieneCuenta = !e.codigo_acceso ? true : false;
-  const tabs = [["resumen", "Resumen"], ["actividad", "Actividad"], ["ficha", "Ficha y contrato"], ["docs", "Documentos"], ["factura", "Factura mensual"]];
+  const injTrab = ausenciasDe(e.id, addDias(hoyISO(), -90)).filter(a => a.tipo === "injustificada").length;
+  const pendTrab = diasSinFichar(e.id).length;
+  const tabs = [["resumen", "Resumen"], ["actividad", "Actividad"],
+    ["asistencia", `Asistencia${injTrab + pendTrab ? ` (${injTrab + pendTrab})` : ""}`],
+    ["ficha", "Ficha y contrato"], ["docs", "Documentos"], ["factura", "Factura mensual"]];
   let body = "";
+  if (tab === "asistencia") {
+    const aus = ausenciasDe(e.id).sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const inj90 = ausenciasDe(e.id, addDias(hoyISO(), -90)).filter(a => a.tipo === "injustificada");
+    const just90 = ausenciasDe(e.id, addDias(hoyISO(), -90)).filter(a => a.tipo === "justificada");
+    const diasTrab90 = new Set(DB.fichajes.filter(f => f.empleado_id === e.id && f.fecha >= addDias(hoyISO(), -90)).map(f => f.fecha)).size;
+    const tasa = diasTrab90 + inj90.length + just90.length ? Math.round(inj90.length / (diasTrab90 + inj90.length + just90.length) * 100) : 0;
+    const pendientes = diasSinFichar(e.id);
+    body = `
+    <div class="kpis" style="margin-bottom:16px">
+      <div class="kpi"><div class="lab">${ICON.alert} Sin justificar · 90 d</div><div class="val" style="${inj90.length ? "color:var(--terra)" : ""}">${inj90.length}</div><div class="sub">${inj90.length ? "requiere atención" : "ninguna"}</div></div>
+      <div class="kpi"><div class="lab">${ICON.doc} Justificadas · 90 d</div><div class="val">${just90.length}</div><div class="sub">con motivo o justificante</div></div>
+      <div class="kpi"><div class="lab">${ICON.chart} Tasa de absentismo</div><div class="val">${tasa}<small>%</small></div><div class="sub">injustificadas / días esperados</div></div>
+      <div class="kpi"><div class="lab">${ICON.check} Días trabajados · 90 d</div><div class="val">${diasTrab90}</div><div class="sub">con fichaje</div></div>
+    </div>
+    ${pendientes.length ? `
+    <div class="legal-note" style="border-color:var(--gold-line);background:var(--gold-soft)">${ICON.alert}
+      <div><b>${pendientes.length} día${pendientes.length > 1 ? "s" : ""} con trabajo asignado y sin fichaje</b> — revisa y regístralo como ausencia:
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">${pendientes.slice(0, 8).map(d => `
+        <button class="btn xs outline" style="background:#fff" onclick="openAusenciaForm(${e.id},'${d}','auto')">${fmtCorto(d)}</button>`).join("")}${pendientes.length > 8 ? `<span class="hint">+${pendientes.length - 8} más</span>` : ""}</div></div>
+    </div>` : ""}
+    <div class="card">
+      <div class="card-head"><h3>Registro de ausencias</h3>
+        <div class="right"><button class="btn sm primary" onclick="openAusenciaForm(${e.id})">${ICON.plus} Registrar ausencia</button></div></div>
+      ${aus.length ? `<div class="tbl-wrap" style="border:none;box-shadow:none"><table class="tbl">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Motivo</th><th>Origen</th><th>Justificante</th><th></th></tr></thead>
+        <tbody>${aus.map(a => `
+          <tr><td><b>${fmtCorto(a.fecha)} ${a.fecha.slice(0, 4)}</b></td>
+          <td>${a.tipo === "injustificada" ? '<span class="chip terra"><i class="d"></i>Sin justificar</span>' : '<span class="chip ok">Justificada</span>'}</td>
+          <td>${esc(a.motivo || "—")}</td>
+          <td><span class="chip line">${a.origen === "auto" ? "Detectada" : "Manual"}</span></td>
+          <td>${a.justificante_path ? `<button class="btn xs outline" onclick="abrirDoc('${esc(a.justificante_path)}')">${ICON.eye} Ver</button>` : "—"}</td>
+          <td class="num" style="white-space:nowrap">
+            ${a.tipo === "injustificada" ? `<button class="btn xs sage" onclick="openJustificarForm(${a.id})">${ICON.check} Justificar</button>` : ""}
+            <button class="btn xs outline" onclick="borrarAusenciaUI(${a.id})">${ICON.trash}</button></td></tr>`).join("")}
+        </tbody></table></div>`
+      : `<div class="empty">${ICON.check}Sin ausencias registradas. Los días con trabajo asignado y sin fichaje aparecerán arriba para revisar.</div>`}
+    </div>`;
+  }
   if (tab === "resumen") {
     const proximas = DB.tareas.filter(t => t.fecha >= hoyISO() && (t.equipo_ids || []).includes(e.id) && t.estado !== "hecha")
       .sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, 5);
@@ -899,13 +948,17 @@ function viewFichajes() {
     <button class="btn sm outline" onclick="openPaperFichajes('${fecha}')">${ICON.print} Informe PDF</button>
   </div>
   ${rows.length ? `<div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Empleado</th><th>Entrada</th><th>Ubicación</th><th>Pausas</th><th>Salida</th><th class="num">Total</th><th>Estado</th></tr></thead>
+    <thead><tr><th>Empleado</th><th>Entrada</th><th>Salida</th><th>Fotos</th><th>Ubicación</th><th>Pausas</th><th class="num">Total</th><th>Estado</th></tr></thead>
     <tbody>${rows.map(f => { const e = S(f.empleado_id) || { nombre: "?" }; const ps = DB.pausas.filter(p => p.fichaje_id === f.id); return `
       <tr><td><span class="who">${ava(e)} ${esc(e.nombre)}</span></td>
       <td><b>${fmtHora(f.entrada)}</b></td>
-      <td>${f.lat ? `<a class="chip line" target="_blank" rel="noopener" href="https://maps.google.com/?q=${f.lat},${f.lng}">${ICON.pin} ver mapa</a>` : "—"}</td>
-      <td>${ps.length ? ps.map(p => fmtHora(p.inicio) + "–" + (p.fin ? fmtHora(p.fin) : "…")).join(", ") : "—"}</td>
       <td>${f.salida ? `<b>${fmtHora(f.salida)}</b>` : "—"}</td>
+      <td><span class="fich-fotos">
+        ${f.foto_entrada_path ? `<a href="#" onclick="event.preventDefault();abrirDoc('${esc(f.foto_entrada_path)}')" title="Foto de entrada"><img data-foto="${esc(f.foto_entrada_path)}" alt="entrada"></a>` : ""}
+        ${f.foto_salida_path ? `<a href="#" onclick="event.preventDefault();abrirDoc('${esc(f.foto_salida_path)}')" title="Foto de salida"><img data-foto="${esc(f.foto_salida_path)}" alt="salida"></a>` : ""}
+        ${!f.foto_entrada_path && !f.foto_salida_path ? "—" : ""}</span></td>
+      <td>${f.lat ? `<a class="chip line" target="_blank" rel="noopener" href="https://maps.google.com/?q=${f.lat},${f.lng}">${ICON.pin} mapa</a>` : "—"}</td>
+      <td>${ps.length ? ps.map(p => fmtHora(p.inicio) + "–" + (p.fin ? fmtHora(p.fin) : "…")).join(", ") : "—"}</td>
       <td class="num"><b>${msAHoras(horasDeFichaje(f))} h</b></td>
       <td>${f.salida ? '<span class="chip ok">Completo</span>' : '<span class="chip blue"><i class="d"></i>Abierta</span>'}</td></tr>`; }).join("")}
     </tbody></table></div>`
@@ -1009,6 +1062,10 @@ function viewInformes() {
       <h4>Liquidaciones a propietarios</h4>
       <p>Resumen económico por propietario: ingresos por reservas, servicios prestados y neto resultante.</p>
       <button class="btn primary" onclick="openPaperLiquidaciones('${mes}')">${ICON.doc} Generar</button></div>
+    <div class="report-card"><span class="ic" style="background:var(--terra-soft);color:var(--terra)">${ICON.alert}</span>
+      <h4>Absentismo y asistencia</h4>
+      <p>Ausencias justificadas y sin justificar por trabajador, con gráficas y análisis automático de patrones.</p>
+      <button class="btn primary" onclick="openPaperAbsentismo('${mes}')">${ICON.doc} Generar</button></div>
   </div>`;
 }
 
@@ -1074,6 +1131,78 @@ function paperCostes(mes) {
     <tr class="total"><td colspan="2">Total cartera</td><td class="num">${tN}</td><td class="num">${Math.round(tH * 10) / 10} h</td><td class="num">${eur(tC)}</td></tr></tbody></table>
     <p style="font-size:11.5px;color:var(--muted)">Horas = duración real de cada servicio (llegada → finalización) × personas asignadas.
     Coste = duración × tarifa €/h de cada trabajador asignado (ficha del trabajador). Los servicios sin tarifa cuentan horas pero no coste.</p>`);
+}
+
+/* gráfica de barras horizontal en SVG (se imprime bien en el PDF) */
+function svgBarras(pares, color = "#b5533c") {
+  if (!pares.length) return "";
+  const max = Math.max(1, ...pares.map(p => p[1]));
+  const w = 660, rowH = 30, h = pares.length * rowH + 4;
+  return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;margin:6px 0 2px" xmlns="http://www.w3.org/2000/svg" font-family="Product Sans,sans-serif">
+    ${pares.map((p, i) => {
+      const y = i * rowH, bw = Math.max(3, p[1] / max * (w - 250));
+      return `<text x="0" y="${y + 19}" font-size="12" fill="#3d4237">${esc(String(p[0]).slice(0, 24))}</text>
+      <rect x="180" y="${y + 6}" width="${bw}" height="17" rx="5" fill="${color}" opacity="${.45 + .55 * (p[1] / max)}"/>
+      <text x="${186 + bw}" y="${y + 19}" font-size="12" font-weight="700" fill="#3d4237">${p[1]}</text>`;
+    }).join("")}
+  </svg>`;
+}
+/* análisis automático de patrones de absentismo (generado de los datos) */
+function analisisAbsentismo(mes) {
+  const desde = addMeses(mes, -5) + "-01", hasta = addDias(addMeses(mes, 1) + "-01", -1);
+  const aus6 = DB.ausencias.filter(a => a.fecha >= desde && a.fecha <= hasta);
+  const inj6 = aus6.filter(a => a.tipo === "injustificada");
+  const ausMes = DB.ausencias.filter(a => a.fecha.startsWith(mes));
+  const injMes = ausMes.filter(a => a.tipo === "injustificada");
+  const frases = [];
+  if (!aus6.length) return ["Sin ausencias registradas en los últimos 6 meses. El registro se alimenta de los días con trabajo asignado y sin fichaje, más las ausencias que registre dirección."];
+  frases.push(`En ${fmtMes(mes)} se registraron <b>${ausMes.length}</b> ausencia${ausMes.length === 1 ? "" : "s"}, de las que <b>${injMes.length}</b> ${injMes.length === 1 ? "fue" : "fueron"} sin justificar. En los últimos 6 meses acumulan ${aus6.length} (${inj6.length} sin justificar).`);
+  if (inj6.length) {
+    const porEmp = {};
+    inj6.forEach(a => porEmp[a.empleado_id] = (porEmp[a.empleado_id] || 0) + 1);
+    const [topId, topN] = Object.entries(porEmp).sort((a, b) => b[1] - a[1])[0];
+    const pct = Math.round(topN / inj6.length * 100);
+    if (pct >= 40 && topN >= 2) frases.push(`<b>${esc(S(+topId)?.nombre || "Un trabajador")}</b> concentra el <b>${pct}%</b> de las ausencias sin justificar del semestre (${topN} de ${inj6.length}). Conviene una conversación individual y pedir justificante por escrito.`);
+    const porDia = [0, 0, 0, 0, 0, 0, 0];
+    inj6.forEach(a => porDia[(new Date(a.fecha + "T12:00").getDay() + 6) % 7]++);
+    const maxDia = Math.max(...porDia);
+    if (inj6.length >= 3 && maxDia / inj6.length >= .4) {
+      const dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábados", "domingos"];
+      frases.push(`Patrón semanal: los <b>${dias[porDia.indexOf(maxDia)]}</b> concentran el <b>${Math.round(maxDia / inj6.length * 100)}%</b> de las ausencias sin justificar — un patrón repetido en un día concreto suele indicar causa organizativa o personal recurrente, no casualidad.`);
+    }
+    const prev3 = DB.ausencias.filter(a => a.tipo === "injustificada" && a.fecha >= addMeses(mes, -3) + "-01" && a.fecha < mes + "-01").length / 3;
+    if (injMes.length > prev3 * 1.5 && injMes.length >= 2) frases.push(`Tendencia <b>al alza</b>: este mes hay ${injMes.length} sin justificar frente a una media de ${Math.round(prev3 * 10) / 10}/mes en el trimestre anterior.`);
+    else if (injMes.length < prev3 * .6) frases.push(`Tendencia <b>a la baja</b>: ${injMes.length} sin justificar este mes frente a una media de ${Math.round(prev3 * 10) / 10}/mes en el trimestre anterior.`);
+    frases.push(`Recomendación: solicitar justificante en un máximo de 48 h tras cada ausencia, dejar constancia en este registro (queda fecha, origen y documento) y revisar los casos reincidentes en la reunión semanal de planificación.`);
+  }
+  return frases;
+}
+function paperAbsentismo(mes) {
+  const activos = DB.emp.filter(e => e.activo);
+  const rows = activos.map(e => {
+    const am = ausenciasDe(e.id).filter(a => a.fecha.startsWith(mes));
+    const inj = am.filter(a => a.tipo === "injustificada").length;
+    const just = am.length - inj;
+    const trab = new Set(DB.fichajes.filter(f => f.empleado_id === e.id && f.fecha.startsWith(mes)).map(f => f.fecha)).size;
+    const esperados = trab + am.length;
+    return { e, trab, inj, just, tasa: esperados ? Math.round(inj / esperados * 100) : 0 };
+  });
+  const desde6 = addMeses(mes, -5) + "-01";
+  const inj6PorEmp = activos.map(e => [e.nombre, ausenciasDe(e.id, desde6).filter(a => a.tipo === "injustificada" && a.fecha <= addDias(addMeses(mes, 1) + "-01", -1)).length]).filter(p => p[1] > 0).sort((a, b) => b[1] - a[1]);
+  const meses6 = Array.from({ length: 6 }, (_, i) => addMeses(mes, i - 5));
+  const evol = meses6.map(m => [new Date(m + "-15T12:00").toLocaleDateString("es-ES", { month: "short", year: "2-digit" }), DB.ausencias.filter(a => a.tipo === "injustificada" && a.fecha.startsWith(m)).length]);
+  const analisis = analisisAbsentismo(mes);
+  return paperShell("Informe de absentismo y asistencia", fmtMes(mes) + " · " + activos.length + " trabajadores en plantilla",
+    `<table><thead><tr><th>Trabajador</th><th class="num">Días trabajados</th><th class="num">Justificadas</th><th class="num">Sin justificar</th><th class="num">Tasa</th></tr></thead>
+    <tbody>${rows.map(r => `<tr><td><b>${esc(r.e.nombre)}</b></td><td class="num">${r.trab}</td><td class="num">${r.just || "—"}</td>
+      <td class="num" style="${r.inj ? "color:var(--terra);font-weight:700" : ""}">${r.inj || "—"}</td><td class="num">${r.tasa}%</td></tr>`).join("")}
+    <tr class="total"><td>Total</td><td class="num">${rows.reduce((a, r) => a + r.trab, 0)}</td>
+      <td class="num">${rows.reduce((a, r) => a + r.just, 0)}</td><td class="num">${rows.reduce((a, r) => a + r.inj, 0)}</td><td></td></tr></tbody></table>
+    ${inj6PorEmp.length ? `<h3 style="font-size:13px;margin:18px 0 4px">Ausencias sin justificar por trabajador · últimos 6 meses</h3>${svgBarras(inj6PorEmp)}` : ""}
+    ${evol.some(e => e[1] > 0) ? `<h3 style="font-size:13px;margin:18px 0 4px">Evolución mensual (sin justificar)</h3>${svgBarras(evol, "#c79c3d")}` : ""}
+    <h3 style="font-size:13px;margin:18px 0 6px">Análisis automático</h3>
+    ${analisis.map(f => `<p style="font-size:12.5px;margin-bottom:8px">• ${f}</p>`).join("")}
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px">Metodología: el portal detecta automáticamente los días con trabajo asignado y sin fichaje; dirección los confirma como ausencia (justificada o no) y puede adjuntar el justificante. Cada registro conserva fecha, origen y autor.</p>`);
 }
 
 function liquidacionOwner(o, mes) {
@@ -1255,6 +1384,12 @@ function viewAjustes() {
         <input class="input" id="chk-new" placeholder="Añadir paso…" style="flex:1">
         <button class="btn sm sage" onclick="addChecklistStep()">${ICON.plus} Añadir</button>
       </div></div>
+    <div class="card"><div class="card-head"><h3>Fichajes y asistencia</h3></div>
+      <div class="set-row"><div class="tx"><b>Foto obligatoria al fichar</b><span>entrada y salida requieren foto: confirma presencia y estado</span></div>
+        <div class="end"><button class="toggle ${fotoFichajeObligatoria() ? "on" : ""}" onclick="toggleFotoFichaje(this)"></button></div></div>
+      <div class="set-row"><div class="tx"><b>Detección de ausencias</b><span>día con trabajo asignado y sin fichaje → aviso en la ficha del trabajador</span></div>
+        <div class="end"><span class="chip ok"><i class="d"></i>Activa</span></div></div>
+    </div>
     <div class="card"><div class="card-head"><h3>Conexión</h3></div>
       <div class="set-row"><div class="tx"><b>Base de datos</b><span>Supabase · ${esc((HYGGE_CONFIG.SUPABASE_URL || "").replace("https://", ""))}</span></div>
         <div class="end"><span class="chip ok"><i class="d"></i>Conectada</span></div></div>
@@ -1383,7 +1518,7 @@ const VIEWS = {
   trabajadores: { t: "Trabajadores",  c: "Plantilla, contratos y facturas",    r: viewTrabajadores,  m: () => {} },
   trabajadordetail: { t: "Trabajador",c: "Ficha completa",                     r: viewTrabajadorDetail, m: () => mountTrabajadorDetail() },
   plan:         { t: "Planificación", c: "Check-outs → servicios → check-ins", r: viewPlan,          m: () => {} },
-  fichajes:     { t: "Fichajes",      c: "Registro de jornada del equipo",     r: viewFichajes,      m: () => {} },
+  fichajes:     { t: "Fichajes",      c: "Registro de jornada del equipo",     r: viewFichajes,      m: () => resolverFotos() },
   incidencias:  { t: "Incidencias",   c: "Averías y avisos del equipo",        r: viewIncidencias,   m: () => {} },
   informes:     { t: "Informes",      c: "Documentos mensuales con tus datos", r: viewInformes,      m: () => {} },
   facturacion:  { t: "Facturación",   c: "Borradores, emisión y cobros",       r: viewFacturacion,   m: () => {} },
