@@ -50,6 +50,7 @@ const ICON = {
   edit:    I('<path d="M4 20h4l11-11-4-4L4 16Z"/><path d="m13 7 4 4"/>'),
   gps:     I('<circle cx="12" cy="12" r="3"/><path d="M12 2.5V6M12 18v3.5M2.5 12H6M18 12h3.5"/>'),
   id:      I('<rect x="3" y="5" width="18" height="14.5" rx="2.5"/><circle cx="8.8" cy="11" r="2.1"/><path d="M5.8 16.3c.5-1.7 1.7-2.6 3-2.6s2.5.9 3 2.6"/><path d="M14.5 9.5h4M14.5 12.5h4M14.5 15.5h2.6"/>'),
+  star:    I('<path d="m12 4 2.4 5 5.6.7-4.1 3.8 1.1 5.5L12 16.2 7 19l1.1-5.5L4 9.7 9.6 9Z"/>'),
 };
 
 const EST = {
@@ -279,8 +280,8 @@ function viewProps() {
   ${list.length ? "" : `<div class="empty">${ICON.search}Sin resultados para ese filtro.</div>`}`;
 }
 
-/* calendario real de un mes (reservas + servicios programados) */
-function calendarioProp(p, mes) {
+/* calendario real de un mes (reservas + servicios programados) · readOnly para el propietario */
+function calendarioProp(p, mes, readOnly) {
   const y = +mes.slice(0, 4), m = +mes.slice(5, 7);
   const dias = new Date(y, m, 0).getDate();
   const dow = (new Date(y, m - 1, 1).getDay() + 6) % 7;
@@ -296,7 +297,7 @@ function calendarioProp(p, mes) {
     const esIn = rs.some(x => x.entrada === iso && x.estado === "confirmada");
     const esOut = rs.some(x => x.salida === iso && x.estado === "confirmada");
     cells += `<div class="cal-day ${r ? "busy" : ""} ${b ? "clean" : ""} ${iso === hoyISO() ? "today" : ""} ${esIn ? "in" : ""} ${esOut ? "outday" : ""}"
-      onclick="openReservaForm(${p.id},'${iso}')" title="${r ? esc(r.huesped || "Reservada") + " · " + r.canal : b ? "Bloqueado" : "Libre · click para reservar"}${diasTarea.has(d) ? " · servicio programado" : ""}">${d}${diasTarea.has(d) ? '<span class="m"></span>' : ""}</div>`;
+      ${readOnly ? "" : `onclick="openReservaForm(${p.id},'${iso}')"`} title="${r ? esc(readOnly ? "Reservada" : (r.huesped || "Reservada")) + " · " + r.canal : b ? "Bloqueado" : readOnly ? "Libre" : "Libre · click para reservar"}${diasTarea.has(d) ? " · servicio programado" : ""}">${d}${diasTarea.has(d) ? '<span class="m"></span>' : ""}</div>`;
   }
   return `<div class="cal"><div class="cal-head"><span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
   <div class="cal-grid">${cells}</div></div>
@@ -1308,28 +1309,122 @@ function viewFacturacion() {
 }
 
 /* ============================================================
-   PROPIETARIOS
+   PROPIETARIOS (admin)
    ============================================================ */
+const stars = n => `<span style="color:var(--gold);letter-spacing:1px">${"★".repeat(n)}<span style="color:#d8d4c6">${"★".repeat(5 - n)}</span></span>`;
+const mejoraEstadoChip = m => ({
+  propuesta: '<span class="chip gold"><i class="d"></i>Propuesta</span>',
+  aceptada: '<span class="chip blue"><i class="d"></i>Aceptada por el propietario</span>',
+  implementada: '<span class="chip ok">Implementada</span>',
+  descartada: '<span class="chip gray">Descartada</span>',
+}[m.estado]);
+
 function viewPropietarios() {
   if (!DB.owners.length) return vacio(ICON.users, "Aún no hay propietarios",
-    "Registra a los dueños de las casas: sus liquidaciones mensuales y facturas se generan solas a partir de sus propiedades.",
+    "Registra a los dueños: tendrán su propio acceso al portal para ver su casa, las reseñas y las propuestas de mejora con su impacto en ingresos.",
     `<button class="btn primary" onclick="openOwnerForm()">${ICON.plus} Añadir propietario</button>`);
   const mesLiq = addMeses(mesISO(), -1);
   return `
-  <div class="toolbar"><div class="spacer"></div>
+  <div class="toolbar">
+    <span class="hint">Toca a un propietario para gestionar sus propiedades, reseñas y propuestas de mejora — y darle su acceso al portal.</span>
+    <div class="spacer"></div>
     <button class="btn primary sm" onclick="openOwnerForm()">${ICON.plus} Nuevo propietario</button></div>
   <div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Propietario</th><th>Contacto</th><th>Propiedades</th><th class="num">Liquidación ${fmtMes(mesLiq).split(" ")[0]}</th><th></th></tr></thead>
-    <tbody>${DB.owners.map(o => { const l = liquidacionOwner(o, mesLiq); return `
-      <tr><td><b>${esc(o.nombre)}</b>${o.pais ? ` <span style="color:var(--muted)">· ${esc(o.pais)}</span>` : ""}</td>
-      <td>${o.email ? `<a class="chip line" href="mailto:${esc(o.email)}">${esc(o.email)}</a>` : "—"}</td>
+    <thead><tr><th>Propietario</th><th>Acceso</th><th>Propiedades</th><th>Mejoras</th><th class="num">Liquidación ${fmtMes(mesLiq).split(" ")[0]}</th><th></th></tr></thead>
+    <tbody>${DB.owners.map(o => {
+      const l = liquidacionOwner(o, mesLiq);
+      const propIds = l.propsO.map(p => p.id);
+      const acept = DB.mejoras.filter(m => propIds.includes(m.propiedad_id) && m.estado === "aceptada").length;
+      const prop = DB.mejoras.filter(m => propIds.includes(m.propiedad_id) && m.estado === "propuesta").length;
+      return `
+      <tr data-owner="${o.id}" style="cursor:pointer">
+      <td><b>${esc(o.nombre)}</b>${o.pais ? ` <span style="color:var(--muted)">· ${esc(o.pais)}</span>` : ""}</td>
+      <td>${o.codigo_acceso ? `<span class="chip gold" title="Código para crear su cuenta">${esc(o.codigo_acceso)}</span>` : '<span class="chip ok">Con cuenta</span>'}</td>
       <td>${l.propsO.map(p => esc(p.nombre)).join(", ") || "—"}</td>
+      <td>${acept ? `<span class="chip blue"><i class="d"></i>${acept} por implementar</span>` : prop ? `<span class="chip gold">${prop} propuesta${prop > 1 ? "s" : ""}</span>` : "—"}</td>
       <td class="num"><b>${l.propsO.length ? eur(l.neto) : "—"}</b></td>
       <td class="num" style="white-space:nowrap">
-        <button class="btn xs outline" onclick="openPaperLiqOwner(${o.id},'${mesLiq}')">${ICON.eye} Liquidación</button>
-        <button class="btn xs outline" onclick="openOwnerForm(${o.id})">${ICON.edit}</button>
+        <button class="btn xs outline" onclick="event.stopPropagation();openPaperLiqOwner(${o.id},'${mesLiq}')">${ICON.eye} Liquidación</button>
+        <button class="btn xs outline" onclick="event.stopPropagation();openOwnerForm(${o.id})">${ICON.edit}</button>
       </td></tr>`; }).join("")}
     </tbody></table></div>`;
+}
+
+function viewPropietarioDetail() {
+  const o = O(STATE.owner); if (!o) { STATE.route = "propietarios"; return viewPropietarios(); }
+  const tab = STATE.ownerTab || "props";
+  const propsO = DB.props.filter(p => p.propietario_id === o.id);
+  const propIds = propsO.map(p => p.id);
+  const resenas = DB.resenas.filter(r => propIds.includes(r.propiedad_id));
+  const mejoras = DB.mejoras.filter(m => propIds.includes(m.propiedad_id));
+  const tabs = [["props", `Propiedades (${propsO.length})`], ["resenas", `Reseñas (${resenas.length})`], ["mejoras", `Mejoras (${mejoras.filter(m => m.estado !== "descartada").length})`]];
+  let body = "";
+  if (tab === "props") {
+    const sueltas = DB.props.filter(p => !p.propietario_id);
+    body = `
+    <div class="card"><div class="card-head"><h3>Propiedades vinculadas</h3>
+      <div class="right">${sueltas.length ? `
+        <select class="select" id="vinc-prop">${sueltas.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("")}</select>
+        <button class="btn sm sage" onclick="vincularPropUI(${o.id})">${ICON.plus} Vincular</button>` : `<span class="hint">No hay propiedades sin dueño; asígnalas también desde la ficha de cada propiedad.</span>`}</div></div>
+      ${propsO.length ? propsO.map(p => `
+        <div class="set-row"><div class="tx"><b>${esc(p.nombre)}</b><span>${esc(p.zona || "")} · ${(p.servicios || []).join(" · ") || "sin servicios definidos"}</span></div>
+        <div class="end">
+          <button class="btn xs outline" data-prop="${p.id}">${ICON.eye} Ficha</button>
+          <button class="btn xs outline" onclick="desvincularPropUI(${p.id})">${ICON.x} Desvincular</button>
+        </div></div>`).join("")
+      : `<p class="hint">Sin propiedades vinculadas todavía.</p>`}
+    </div>`;
+  }
+  if (tab === "resenas") body = `
+    <div class="toolbar"><span class="hint">Las reseñas que registres aquí las ve el propietario en su portal.</span>
+      <div class="spacer"></div><button class="btn primary sm" onclick="openResenaForm(${o.id})">${ICON.plus} Añadir reseña</button></div>
+    ${resenas.length ? resenas.map(r => `
+      <div class="card" style="margin-bottom:10px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${stars(r.puntuacion)}
+            <b>${esc(r.autor || "Huésped")}</b><span class="chip line">${esc(r.canal || "")}</span>
+            <span class="hint">${esc(P(r.propiedad_id)?.nombre || "")} · ${fmtCorto(r.fecha)}</span></div>
+          ${r.texto ? `<p style="font-size:13.5px;margin-top:8px">«${esc(r.texto)}»</p>` : ""}
+        </div>
+        <button class="btn xs outline" onclick="borrarResenaUI(${r.id})">${ICON.trash}</button>
+      </div>`).join("")
+    : vacio(ICON.star, "Sin reseñas registradas", "Copia aquí las reseñas de Airbnb/Booking de sus propiedades: al propietario le encanta verlas.")}`;
+  if (tab === "mejoras") body = `
+    <div class="toolbar"><span class="hint">Propuestas del inquilino o de la agencia, con su mejora de precio por noche. El propietario las ve y puede aceptarlas.</span>
+      <div class="spacer"></div><button class="btn primary sm" onclick="openMejoraForm(${o.id})">${ICON.plus} Nueva propuesta</button></div>
+    ${mejoras.length ? mejoras.map(m => `
+      <div class="card" style="margin-bottom:10px">
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <b style="font-size:14.5px">${esc(m.titulo)}</b>
+          <span class="chip ${m.origen === "inquilino" ? "lilac" : "sage"}">${m.origen === "inquilino" ? "Propuesta de inquilino" : "Propuesta de la agencia"}</span>
+          ${mejoraEstadoChip(m)}
+          <span class="chip gold">+${eur(m.incremento_precio)}/noche</span>
+          ${m.coste_estimado ? `<span class="chip line">coste ~${eur0(m.coste_estimado)}</span>` : ""}
+          <span class="hint" style="margin-left:auto">${esc(P(m.propiedad_id)?.nombre || "")}${m.autor ? " · " + esc(m.autor) : ""}</span>
+        </div>
+        ${m.descripcion ? `<p class="hint" style="margin-top:8px">${esc(m.descripcion)}</p>` : ""}
+        ${m.estado === "implementada" ? `<p style="font-size:12.5px;color:var(--ok);font-weight:700;margin-top:8px">Este mes: +${eur(ingresoExtraMejora(m))} (${statsMesProp(m.propiedad_id, mesISO()).noches} noches × ${eur(m.incremento_precio)})</p>` : ""}
+        <div style="display:flex;gap:7px;margin-top:10px;flex-wrap:wrap">
+          ${m.estado === "propuesta" || m.estado === "aceptada" ? `<button class="btn xs sage" onclick="estadoMejoraUI(${m.id},'implementada')">${ICON.check} Marcar implementada</button>` : ""}
+          ${m.estado !== "descartada" && m.estado !== "implementada" ? `<button class="btn xs outline" onclick="estadoMejoraUI(${m.id},'descartada')">Descartar</button>` : ""}
+          <button class="btn xs outline" onclick="openMejoraForm(${o.id},${m.id})">${ICON.edit}</button>
+          <button class="btn xs outline" onclick="borrarMejoraUI(${m.id})">${ICON.trash}</button>
+        </div>
+      </div>`).join("")
+    : vacio(ICON.chart, "Sin propuestas de mejora", "Apunta aquí lo que sugieren los inquilinos y lo que detecta la agencia, con su mejora de precio: es el mejor argumento para que el propietario invierta.")}`;
+  return `
+  <button class="btn sm outline" style="margin-bottom:14px" data-go="propietarios">${ICON.back} Propietarios</button>
+  <div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+    <span class="mini-ava" style="width:44px;height:44px;font-size:15px;background:var(--gold)">${ini(o.nombre)}</span>
+    <div style="flex:1;min-width:200px"><b style="font-size:18px">${esc(o.nombre)}</b>
+      <div class="hint">${esc(o.pais || "")}${o.email ? " · " + esc(o.email) : ""}${o.idioma ? " · idioma " + esc(o.idioma) : ""}</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      ${o.codigo_acceso ? `<span class="hint">Su acceso al portal:</span><button class="code-chip" onclick="copiar('${esc(o.codigo_acceso)}')">${esc(o.codigo_acceso)} ${ICON.copy}</button>` : `<span class="chip ok">${ICON.check} Ya tiene cuenta en el portal</span>`}
+      <button class="btn sm outline" onclick="openOwnerForm(${o.id})">${ICON.edit} Editar</button>
+    </div>
+  </div>
+  <div class="tabs">${tabs.map(t => `<button class="tab ${tab === t[0] ? "on" : ""}" onclick="STATE.ownerTab='${t[0]}';rerender()">${t[1]}</button>`).join("")}</div>
+  ${body}`;
 }
 function paperLiqOwner(o, mes) {
   const l = liquidacionOwner(o, mes);
@@ -1341,6 +1436,162 @@ function paperLiqOwner(o, mes) {
       <tr class="total"><td>Neto a favor de ${esc(o.nombre)}</td><td class="num">${eur(l.neto)}</td></tr>
     </tbody></table>
     <p style="font-size:11.5px;color:var(--muted)">Ingresos según los importes registrados en las reservas del periodo.</p>`);
+}
+
+/* ============================================================
+   PORTAL DEL PROPIETARIO (rol 'propietario')
+   ============================================================ */
+function ownPropActual() {
+  const mias = misProps();
+  if (!mias.length) return null;
+  return mias.find(p => p.id === STATE.ownProp) || mias[0];
+}
+function ownSelector() {
+  const mias = misProps();
+  if (mias.length < 2) return "";
+  return `<select class="select" onchange="STATE.ownProp=+this.value;rerender()">
+    ${mias.map(p => `<option value="${p.id}" ${ownPropActual()?.id === p.id ? "selected" : ""}>${esc(p.nombre)}</option>`).join("")}</select>`;
+}
+function viewOwnerHome() {
+  const o = miOwner();
+  const p = ownPropActual();
+  if (!p) return vacio(ICON.house, "Tu cuenta aún no tiene propiedades vinculadas", "Hygge Services te la vinculará en cuanto esté dada de alta. Si crees que es un error, escríbenos.");
+  const mes = mesISO();
+  const st = statsMesProp(p.id, mes);
+  const extraMes = DB.mejoras.filter(m => m.propiedad_id === p.id && m.estado === "implementada").reduce((a, m) => a + ingresoExtraMejora(m, mes), 0);
+  const hoyOcupada = DB.reservas.some(r => r.propiedad_id === p.id && r.estado === "confirmada" && r.entrada <= hoyISO() && hoyISO() < r.salida);
+  const proxima = DB.reservas.filter(r => r.propiedad_id === p.id && r.entrada >= hoyISO() && r.estado === "confirmada").sort((a, b) => a.entrada.localeCompare(b.entrada))[0];
+  const feed = [
+    ...DB.tareas.filter(t => t.propiedad_id === p.id && t.estado === "hecha").slice(-6).map(t => ({
+      f: t.fecha, ic: ICON.broom, cl: "ok", b: (t.tipo === "limpieza" ? "Limpieza realizada" : "Servicio realizado"),
+      s: `${(t.fotos || []).length ? (t.fotos.length + " foto" + (t.fotos.length > 1 ? "s" : "") + " del estado") : "por el equipo Hygge"}${t.notas_equipo ? " · «" + esc(t.notas_equipo) + "»" : ""}`, fotos: t.fotos || [] })),
+    ...DB.incidencias.filter(i => i.propiedad_id === p.id).slice(0, 4).map(i => ({
+      f: i.created_at.slice(0, 10), ic: ICON.alert, cl: i.estado === "resuelta" ? "ok" : "terra",
+      b: (i.estado === "resuelta" ? "Incidencia resuelta: " : "Incidencia en gestión: ") + esc(i.titulo), s: i.estado === "resuelta" ? "resuelta por el equipo Hygge" : "nos estamos ocupando", fotos: [] })),
+  ].sort((a, b) => b.f.localeCompare(a.f)).slice(0, 8);
+  return `
+  <div class="dash-hero">
+    <div><h2>Hola${o ? ", " + esc(o.nombre) : ""} 👋</h2>
+      <div class="date">${fmtDia(hoyISO())} · así está tu casa hoy</div></div>
+    <div class="season">${ownSelector()}</div>
+  </div>
+  <div class="prop-hero">
+    ${coverProp(p)}
+    <div class="inner">
+      <div><h2>${esc(p.nombre)}</h2><div class="loc">${ICON.pin} ${esc(p.zona || "")}</div></div>
+      <div class="right">${hoyOcupada ? '<span class="chip gold"><i class="d"></i>Ocupada ahora</span>' : '<span class="chip ok"><i class="d"></i>Libre hoy</span>'}
+        ${proxima ? `<span class="chip line">Próxima entrada: ${fmtCorto(proxima.entrada)}</span>` : ""}</div>
+    </div>
+  </div>
+  <div class="kpis" style="margin:16px 0">
+    <div class="kpi"><div class="lab">${ICON.cal} Noches este mes</div><div class="val">${st.noches}<small>/${st.dias}</small></div><div class="sub">${st.ocup}% de ocupación</div></div>
+    <div class="kpi"><div class="lab">${ICON.euro} Ingresos por reservas</div><div class="val">${eur0(st.ingresos)}</div><div class="sub">entradas de este mes</div></div>
+    <div class="kpi"><div class="lab">${ICON.broom} Servicios realizados</div><div class="val">${tareasPropMes(p.id, mes).length}</div><div class="sub">limpiezas y mantenimiento</div></div>
+    <div class="kpi"><div class="lab">${ICON.chart} Extra por mejoras</div><div class="val" style="${extraMes ? "color:var(--ok)" : ""}">${extraMes ? "+" + eur0(extraMes) : "—"}</div><div class="sub">${extraMes ? "este mes, por mejoras implementadas" : "mira la pestaña Mejoras"}</div></div>
+  </div>
+  <div class="dash-grid">
+    <div class="card"><div class="card-head"><h3>Qué está pasando en tu casa</h3></div>
+      ${feed.length ? feed.map(x => `
+        <div class="agenda-item">
+          <span class="agenda-hour">${fmtCorto(x.f)}</span>
+          <span class="ic" style="background:var(--${x.cl}-soft);color:var(--${x.cl})">${x.ic}</span>
+          <div class="tx"><b>${x.b}</b><span>${x.s}</span></div>
+        </div>
+        ${x.fotos.length ? `<div class="thumbs" style="margin:0 0 10px 58px">${x.fotos.slice(0, 4).map(f => `<a href="#" onclick="event.preventDefault();abrirDoc('${esc(f)}')"><img data-foto="${esc(f)}" alt=""></a>`).join("")}</div>` : ""}`).join("")
+      : `<div class="empty">${ICON.check}Sin actividad reciente.</div>`}
+    </div>
+    <div class="card"><div class="card-head"><h3>Calendario</h3>
+      <div class="right"><span class="month-nav">
+        <button onclick="STATE.propMes='${addMeses(STATE.propMes || mesISO(), -1)}';rerender()">${ICON.left}</button><b>${fmtMes(STATE.propMes || mesISO())}</b>
+        <button onclick="STATE.propMes='${addMeses(STATE.propMes || mesISO(), 1)}';rerender()">${ICON.right}</button></span></div></div>
+      ${calendarioProp(p, STATE.propMes || mesISO(), true)}
+    </div>
+  </div>`;
+}
+
+function viewOwnerResenas() {
+  const propIds = misProps().map(p => p.id);
+  const rs = DB.resenas.filter(r => propIds.includes(r.propiedad_id));
+  const media = rs.length ? Math.round(rs.reduce((a, r) => a + r.puntuacion, 0) / rs.length * 10) / 10 : 0;
+  return `
+  <div class="kpis" style="margin-bottom:16px">
+    <div class="kpi"><div class="lab">${ICON.star} Valoración media</div><div class="val">${media || "—"}</div><div class="sub">${rs.length} reseña${rs.length === 1 ? "" : "s"}</div></div>
+    <div class="kpi"><div class="lab">${ICON.check} 5 estrellas</div><div class="val">${rs.filter(r => r.puntuacion === 5).length}</div><div class="sub">de ${rs.length}</div></div>
+  </div>
+  ${rs.length ? rs.map(r => `
+    <div class="card" style="margin-bottom:10px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${stars(r.puntuacion)}
+        <b>${esc(r.autor || "Huésped")}</b><span class="chip line">${esc(r.canal || "")}</span>
+        <span class="hint" style="margin-left:auto">${esc(P(r.propiedad_id)?.nombre || "")} · ${fmtCorto(r.fecha)}</span></div>
+      ${r.texto ? `<p style="font-size:14px;margin-top:8px">«${esc(r.texto)}»</p>` : ""}
+    </div>`).join("")
+  : vacio(ICON.star, "Aún sin reseñas", "Cuando tus huéspedes valoren su estancia, las verás aquí.")}`;
+}
+
+function viewOwnerMejoras() {
+  const propIds = misProps().map(p => p.id);
+  const todas = DB.mejoras.filter(m => propIds.includes(m.propiedad_id));
+  const propuestas = todas.filter(m => m.estado === "propuesta");
+  const aceptadas = todas.filter(m => m.estado === "aceptada");
+  const implementadas = todas.filter(m => m.estado === "implementada");
+  const extraMes = implementadas.reduce((a, m) => a + ingresoExtraMejora(m), 0);
+  const sel = STATE.mejorasSel;
+  const selMejoras = propuestas.filter(m => sel.has(m.id));
+  const extraNoche = selMejoras.reduce((a, m) => a + (+m.incremento_precio || 0), 0);
+  const extraProy = selMejoras.reduce((a, m) => a + (+m.incremento_precio || 0) * nochesReferencia(m.propiedad_id), 0);
+  return `
+  <div class="kpis" style="margin-bottom:16px">
+    <div class="kpi"><div class="lab">${ICON.chart} Propuestas abiertas</div><div class="val">${propuestas.length}</div><div class="sub">de inquilinos y de Hygge</div></div>
+    <div class="kpi"><div class="lab">${ICON.check} Implementadas</div><div class="val">${implementadas.length}</div><div class="sub">${aceptadas.length ? aceptadas.length + " aceptadas en marcha" : "mejorando tu precio/noche"}</div></div>
+    <div class="kpi"><div class="lab">${ICON.euro} Extra este mes</div><div class="val" style="${extraMes ? "color:var(--ok)" : ""}">${extraMes ? "+" + eur0(extraMes) : "—"}</div><div class="sub">por las mejoras ya implementadas</div></div>
+  </div>
+
+  ${propuestas.length ? `
+  <div class="card" style="margin-bottom:16px;background:linear-gradient(120deg,#fff,#f7f1e2)">
+    <div class="card-head"><h3>Simulador: ¿y si las implemento?</h3>
+      <span class="sub">marca propuestas y mira cuánto subiría tu precio por noche y tus ingresos del mes</span></div>
+    <div class="check-list">
+      ${propuestas.map(m => `
+        <button class="check-item ${sel.has(m.id) ? "on" : ""}" onclick="toggleMejoraSel(${m.id})">
+          <span class="bx">${ICON.check}</span>
+          <span style="flex:1;text-align:left">${esc(m.titulo)}
+            <span class="hint" style="display:block;font-weight:400">${m.origen === "inquilino" ? "lo piden tus huéspedes" : "propuesta de Hygge"}${m.coste_estimado ? " · inversión ~" + eur0(m.coste_estimado) : ""} · ${esc(P(m.propiedad_id)?.nombre || "")}</span></span>
+          <span class="chip gold">+${eur(m.incremento_precio)}/noche</span>
+        </button>`).join("")}
+    </div>
+    <div style="display:flex;gap:16px;align-items:center;margin-top:16px;flex-wrap:wrap">
+      <div class="fact" style="flex:1;min-width:190px"><div class="k">Tu precio subiría</div><div class="v" style="font-size:19px">+${eur(extraNoche)} /noche</div></div>
+      <div class="fact" style="flex:1;min-width:190px;background:var(--ok-soft)"><div class="k">Ingresos extra estimados</div><div class="v" style="font-size:19px;color:var(--ok)">+${eur0(extraProy)} /mes</div></div>
+      <button class="btn primary" ${sel.size ? "" : "disabled"} onclick="aceptarMejorasSel()">${ICON.check} Me interesan: adelante</button>
+    </div>
+    <p class="form-note">Estimación con las noches ocupadas del último mes. Al aceptar, Hygge se pone en marcha y te confirma coste y fechas.</p>
+  </div>` : ""}
+
+  ${aceptadas.length ? `<div class="card" style="margin-bottom:16px"><div class="card-head"><h3>Aceptadas · en marcha</h3></div>
+    ${aceptadas.map(m => `<div class="set-row"><div class="tx"><b>${esc(m.titulo)}</b><span>+${eur(m.incremento_precio)}/noche en cuanto esté lista · ${esc(P(m.propiedad_id)?.nombre || "")}</span></div>
+    <div class="end"><span class="chip blue"><i class="d"></i>Hygge trabajando en ello</span></div></div>`).join("")}</div>` : ""}
+
+  ${implementadas.length ? `<div class="card"><div class="card-head"><h3>Implementadas · ya generan ingresos</h3></div>
+    ${implementadas.map(m => `<div class="set-row"><div class="tx"><b>${esc(m.titulo)}</b>
+      <span>desde ${m.implementada_at ? fmtCorto(m.implementada_at) : "—"} · ${esc(P(m.propiedad_id)?.nombre || "")}</span></div>
+    <div class="end"><span class="chip ok">+${eur(ingresoExtraMejora(m))} este mes</span></div></div>`).join("")}</div>` : ""}
+
+  ${!todas.length ? vacio(ICON.chart, "Sin propuestas todavía", "Cuando tus huéspedes o el equipo Hygge detecten mejoras que suban el valor de tu casa, aparecerán aquí con su impacto en precio.") : ""}`;
+}
+
+function viewOwnerLiq() {
+  const o = miOwner(); if (!o) return "";
+  const mes = STATE.liqMes || addMeses(mesISO(), -1);
+  return `
+  <div class="toolbar">
+    <span class="month-nav">
+      <button onclick="STATE.liqMes='${addMeses(mes, -1)}';rerender()">${ICON.left}</button><b style="text-transform:capitalize">${fmtMes(mes)}</b>
+      <button onclick="STATE.liqMes='${addMeses(mes, 1)}';rerender()">${ICON.right}</button>
+    </span>
+    <div class="spacer"></div>
+    <button class="btn sm outline" onclick="printPaper()">${ICON.print} Descargar PDF</button>
+  </div>
+  ${paperLiqOwner(o, mes)}`;
 }
 
 /* ============================================================
@@ -1522,9 +1773,15 @@ const VIEWS = {
   incidencias:  { t: "Incidencias",   c: "Averías y avisos del equipo",        r: viewIncidencias,   m: () => {} },
   informes:     { t: "Informes",      c: "Documentos mensuales con tus datos", r: viewInformes,      m: () => {} },
   facturacion:  { t: "Facturación",   c: "Borradores, emisión y cobros",       r: viewFacturacion,   m: () => {} },
-  propietarios: { t: "Propietarios",  c: "Dueños y liquidaciones",             r: viewPropietarios,  m: () => {} },
+  propietarios: { t: "Propietarios",  c: "Dueños, reseñas y mejoras",          r: viewPropietarios,  m: () => {} },
+  propietariodetail: { t: "Propietario", c: "Propiedades, reseñas y mejoras",   r: viewPropietarioDetail, m: () => {} },
   ajustes:      { t: "Ajustes",       c: "Empresa, usuarios y plantillas",     r: viewAjustes,       m: () => {} },
   midia:        { t: "Mi día",        c: "Fichaje, tareas e incidencias",      r: viewMiDia,         m: () => mountMiDia() },
   mishoras:     { t: "Mis horas",     c: "Tu registro de jornada",             r: viewMisHoras,      m: () => {} },
   misincidencias:{ t: "Incidencias",  c: "Las que has reportado tú",           r: viewMisIncidencias,m: () => {} },
+  /* propietario */
+  ownerhome:    { t: "Mi propiedad",  c: "Así está tu casa hoy",               r: viewOwnerHome,     m: () => resolverFotos() },
+  ownerresenas: { t: "Reseñas",       c: "Lo que dicen tus huéspedes",         r: viewOwnerResenas,  m: () => {} },
+  ownermejoras: { t: "Mejoras",       c: "Sube el valor de tu casa",           r: viewOwnerMejoras,  m: () => {} },
+  ownerliq:     { t: "Liquidaciones", c: "Tu resumen económico mensual",       r: viewOwnerLiq,      m: () => {} },
 };

@@ -51,6 +51,12 @@ create table if not exists propietarios (
   created_at timestamptz not null default now()
 );
 
+-- v1.3 · portal del propietario
+alter table propietarios add column if not exists codigo_acceso text unique default substr(md5(random()::text), 1, 8);
+alter table profiles add column if not exists propietario_id bigint references propietarios(id) on delete set null;
+alter table profiles drop constraint if exists profiles_rol_check;
+alter table profiles add constraint profiles_rol_check check (rol in ('direccion','equipo','propietario'));
+
 create table if not exists propiedades (
   id              bigint generated always as identity primary key,
   nombre          text not null,
@@ -75,6 +81,35 @@ create table if not exists propiedades (
   lng             numeric(9,6),
   created_at      timestamptz not null default now()
 );
+
+-- reseñas de huéspedes (las registra la agencia)
+create table if not exists resenas (
+  id           bigint generated always as identity primary key,
+  propiedad_id bigint not null references propiedades(id) on delete cascade,
+  autor        text,
+  canal        text default 'Airbnb',
+  puntuacion   int not null default 5 check (puntuacion between 1 and 5),
+  texto        text,
+  fecha        date not null default current_date,
+  created_at   timestamptz not null default now()
+);
+
+-- propuestas de mejora (del inquilino o de la agencia) valoradas en €/noche
+create table if not exists mejoras (
+  id               bigint generated always as identity primary key,
+  propiedad_id     bigint not null references propiedades(id) on delete cascade,
+  titulo           text not null,
+  descripcion      text,
+  origen           text not null default 'agencia' check (origen in ('inquilino','agencia')),
+  autor            text,
+  incremento_precio numeric(8,2) not null default 0,   -- € por noche estimados
+  coste_estimado   numeric(10,2),
+  estado           text not null default 'propuesta' check (estado in ('propuesta','aceptada','implementada','descartada')),
+  implementada_at  date,
+  created_at       timestamptz not null default now()
+);
+create index if not exists idx_resenas_prop on resenas (propiedad_id, fecha);
+create index if not exists idx_mejoras_prop on mejoras (propiedad_id, estado);
 
 create table if not exists reservas (
   id           bigint generated always as identity primary key,
@@ -248,6 +283,11 @@ language sql stable security definer set search_path = public as $$
   select empleado_id from profiles where id = auth.uid();
 $$;
 
+create or replace function my_owner() returns bigint
+language sql stable security definer set search_path = public as $$
+  select propietario_id from profiles where id = auth.uid();
+$$;
+
 -- perfil automático al registrarse
 create or replace function handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -278,13 +318,24 @@ begin
       where e.codigo_acceso = lower(trim(p_codigo)) and e.activo
         and not exists (select 1 from profiles p where p.empleado_id = e.id)
       limit 1;
-    if v_emp is null then
-      raise exception 'Código no válido o ya utilizado';
+    if v_emp is not null then
+      update profiles set rol = 'equipo', empleado_id = v_emp,
+        nombre = coalesce(nombre, (select nombre from empleados where id = v_emp))
+        where id = auth.uid();
+      return 'equipo';
     end if;
-    update profiles set rol = 'equipo', empleado_id = v_emp,
-      nombre = coalesce(nombre, (select nombre from empleados where id = v_emp))
-      where id = auth.uid();
-    return 'equipo';
+    -- ¿es un código de propietario?
+    select o.id into v_emp from propietarios o
+      where o.codigo_acceso = lower(trim(p_codigo))
+        and not exists (select 1 from profiles p where p.propietario_id = o.id)
+      limit 1;
+    if v_emp is not null then
+      update profiles set rol = 'propietario', propietario_id = v_emp,
+        nombre = coalesce(nombre, (select nombre from propietarios where id = v_emp))
+        where id = auth.uid();
+      return 'propietario';
+    end if;
+    raise exception 'Código no válido o ya utilizado';
   end if;
 
   if not exists (select 1 from profiles where rol = 'direccion') then
@@ -343,9 +394,10 @@ drop policy if exists profiles_update on profiles;
 create policy profiles_update on profiles for update to authenticated
   using (is_direccion()) with check (is_direccion());
 
--- empleados: lectura para todo el equipo autenticado, escritura dirección
+-- empleados: lectura para dirección y equipo (los propietarios no ven la plantilla)
 drop policy if exists empleados_select on empleados;
-create policy empleados_select on empleados for select to authenticated using (true);
+create policy empleados_select on empleados for select to authenticated
+  using (is_direccion() or my_emp() is not null);
 drop policy if exists empleados_write on empleados;
 create policy empleados_write on empleados for all to authenticated
   using (is_direccion()) with check (is_direccion());
@@ -356,28 +408,36 @@ drop policy if exists empdatos_all on empleados_datos;
 create policy empdatos_all on empleados_datos for all to authenticated
   using (is_direccion()) with check (is_direccion());
 
--- propietarios: solo dirección
+-- propietarios: dirección todo; cada propietario lee su propia ficha
 drop policy if exists propietarios_all on propietarios;
 create policy propietarios_all on propietarios for all to authenticated
   using (is_direccion()) with check (is_direccion());
+drop policy if exists propietarios_self on propietarios;
+create policy propietarios_self on propietarios for select to authenticated
+  using (id = my_owner());
 
--- propiedades: lectura autenticados, escritura dirección
+-- propiedades: dirección y equipo ven todas; el propietario, solo las suyas
 drop policy if exists propiedades_select on propiedades;
-create policy propiedades_select on propiedades for select to authenticated using (true);
+create policy propiedades_select on propiedades for select to authenticated
+  using (is_direccion() or my_emp() is not null or propietario_id = my_owner());
 drop policy if exists propiedades_write on propiedades;
 create policy propiedades_write on propiedades for all to authenticated
   using (is_direccion()) with check (is_direccion());
 
--- reservas: lectura autenticados (el equipo ve entradas/salidas), escritura dirección
+-- reservas: dirección/equipo todas; propietario, las de sus propiedades
 drop policy if exists reservas_select on reservas;
-create policy reservas_select on reservas for select to authenticated using (true);
+create policy reservas_select on reservas for select to authenticated
+  using (is_direccion() or my_emp() is not null
+         or exists (select 1 from propiedades p where p.id = propiedad_id and p.propietario_id = my_owner()));
 drop policy if exists reservas_write on reservas;
 create policy reservas_write on reservas for all to authenticated
   using (is_direccion()) with check (is_direccion());
 
--- tareas: lectura autenticados; crear/borrar dirección; actualizar dirección o asignados
+-- tareas: dirección/equipo todas; propietario, las de sus propiedades
 drop policy if exists tareas_select on tareas;
-create policy tareas_select on tareas for select to authenticated using (true);
+create policy tareas_select on tareas for select to authenticated
+  using (is_direccion() or my_emp() is not null
+         or exists (select 1 from propiedades p where p.id = propiedad_id and p.propietario_id = my_owner()));
 drop policy if exists tareas_insert on tareas;
 create policy tareas_insert on tareas for insert to authenticated
   with check (is_direccion() or my_emp() = any(equipo_ids));  -- el equipo puede abrirse una tarea ad-hoc en una propiedad
@@ -418,18 +478,25 @@ create policy posiciones_update on posiciones for update to authenticated
   using (empleado_id = my_emp() or is_direccion())
   with check (empleado_id = my_emp() or is_direccion());
 
--- incidencias: leer y crear autenticados; resolver/editar dirección
+-- incidencias: dirección/equipo todas; propietario, las de sus propiedades
 drop policy if exists incidencias_select on incidencias;
-create policy incidencias_select on incidencias for select to authenticated using (true);
+create policy incidencias_select on incidencias for select to authenticated
+  using (is_direccion() or my_emp() is not null
+         or exists (select 1 from propiedades p where p.id = propiedad_id and p.propietario_id = my_owner()));
 drop policy if exists incidencias_insert on incidencias;
-create policy incidencias_insert on incidencias for insert to authenticated with check (true);
+create policy incidencias_insert on incidencias for insert to authenticated
+  with check (is_direccion() or my_emp() is not null);
 drop policy if exists incidencias_update on incidencias;
 create policy incidencias_update on incidencias for update to authenticated
   using (is_direccion()) with check (is_direccion());
 drop policy if exists inc_eventos_select on incidencia_eventos;
-create policy inc_eventos_select on incidencia_eventos for select to authenticated using (true);
+create policy inc_eventos_select on incidencia_eventos for select to authenticated
+  using (is_direccion() or my_emp() is not null
+         or exists (select 1 from incidencias i join propiedades p on p.id = i.propiedad_id
+                    where i.id = incidencia_id and p.propietario_id = my_owner()));
 drop policy if exists inc_eventos_insert on incidencia_eventos;
-create policy inc_eventos_insert on incidencia_eventos for insert to authenticated with check (true);
+create policy inc_eventos_insert on incidencia_eventos for insert to authenticated
+  with check (is_direccion() or my_emp() is not null);
 
 -- ausencias: dirección gestiona; cada trabajador puede ver las suyas
 alter table ausencias enable row level security;
@@ -443,11 +510,41 @@ create policy ausencias_write on ausencias for all to authenticated
 -- compras: el equipo añade y marca compradas; borrar, dirección
 alter table compras enable row level security;
 drop policy if exists compras_select on compras;
-create policy compras_select on compras for select to authenticated using (true);
+create policy compras_select on compras for select to authenticated
+  using (is_direccion() or my_emp() is not null);
 drop policy if exists compras_insert on compras;
-create policy compras_insert on compras for insert to authenticated with check (true);
+create policy compras_insert on compras for insert to authenticated
+  with check (is_direccion() or my_emp() is not null);
 drop policy if exists compras_update on compras;
-create policy compras_update on compras for update to authenticated using (true) with check (true);
+create policy compras_update on compras for update to authenticated
+  using (is_direccion() or my_emp() is not null) with check (is_direccion() or my_emp() is not null);
+
+-- reseñas: escribe dirección; lee dirección y el propietario de la casa
+alter table resenas enable row level security;
+drop policy if exists resenas_select on resenas;
+create policy resenas_select on resenas for select to authenticated
+  using (is_direccion()
+         or exists (select 1 from propiedades p where p.id = propiedad_id and p.propietario_id = my_owner()));
+drop policy if exists resenas_write on resenas;
+create policy resenas_write on resenas for all to authenticated
+  using (is_direccion()) with check (is_direccion());
+
+-- mejoras: crea/borra dirección; el propietario ve las suyas y puede aceptar (update)
+alter table mejoras enable row level security;
+drop policy if exists mejoras_select on mejoras;
+create policy mejoras_select on mejoras for select to authenticated
+  using (is_direccion()
+         or exists (select 1 from propiedades p where p.id = propiedad_id and p.propietario_id = my_owner()));
+drop policy if exists mejoras_insert on mejoras;
+create policy mejoras_insert on mejoras for insert to authenticated with check (is_direccion());
+drop policy if exists mejoras_delete on mejoras;
+create policy mejoras_delete on mejoras for delete to authenticated using (is_direccion());
+drop policy if exists mejoras_update on mejoras;
+create policy mejoras_update on mejoras for update to authenticated
+  using (is_direccion()
+         or exists (select 1 from propiedades p where p.id = propiedad_id and p.propietario_id = my_owner()))
+  with check (is_direccion()
+         or exists (select 1 from propiedades p where p.id = propiedad_id and p.propietario_id = my_owner()));
 drop policy if exists compras_delete on compras;
 create policy compras_delete on compras for delete to authenticated using (is_direccion());
 

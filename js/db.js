@@ -8,7 +8,7 @@ const DB = {
   session: null, profile: null,          // profile: {id, nombre, rol, empleado_id}
   emp: [], empDatos: [], props: [], owners: [], reservas: [], tareas: [],
   fichajes: [], pausas: [], posiciones: [], incidencias: [], eventos: [],
-  facturas: [], compras: [], ausencias: [], ajustes: {}, pendientes: [],
+  facturas: [], compras: [], ausencias: [], resenas: [], mejoras: [], ajustes: {}, pendientes: [],
   fotoUrls: {},                          // path -> signed url (caché)
   cargado: false,
 };
@@ -63,7 +63,7 @@ const limpiaErr = m => (m || "").replace(/^.*?exception:?\s*/i, "").replace("new
 async function dbCargarTodo() {
   const desde = addDias(hoyISO(), -400), hasta = addDias(hoyISO(), 400);
   const q = (t, sel, mod) => { let x = DB.sb.from(t).select(sel || "*"); if (mod) x = mod(x); return x; };
-  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aus, aj, pend] = await Promise.all([
+  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aus, rsn, mej, aj, pend] = await Promise.all([
     q("empleados", "*", x => x.order("nombre")),
     q("empleados_datos", "*"),
     q("propiedades", "*", x => x.order("nombre")),
@@ -78,6 +78,8 @@ async function dbCargarTodo() {
     q("facturas", "*", x => x.order("created_at", { ascending: false })),
     q("compras", "*", x => x.order("created_at", { ascending: false })),
     q("ausencias", "*", x => x.order("fecha", { ascending: false })),
+    q("resenas", "*", x => x.order("fecha", { ascending: false })),
+    q("mejoras", "*", x => x.order("created_at", { ascending: false })),
     q("ajustes", "*"),
     DB.sb.from("profiles").select("*").is("rol", null),
   ]);
@@ -87,6 +89,7 @@ async function dbCargarTodo() {
   DB.pausas = pau.data || []; DB.posiciones = pos.data || []; DB.incidencias = inc.data || [];
   DB.eventos = ev.data || []; DB.facturas = fac.data || []; DB.compras = com.data || [];
   DB.ausencias = aus.data || [];
+  DB.resenas = rsn.data || []; DB.mejoras = mej.data || [];
   DB.ajustes = Object.fromEntries((aj.data || []).map(a => [a.clave, a.valor]));
   DB.pendientes = pend.data || [];
   DB.cargado = true;
@@ -113,6 +116,8 @@ const S = id => DB.emp.find(e => e.id === id);
 const O = id => DB.owners.find(o => o.id === id);
 const ED = id => DB.empDatos.find(d => d.empleado_id === id) || {};
 const miEmp = () => DB.profile?.empleado_id ? S(DB.profile.empleado_id) : null;
+const miOwner = () => DB.profile?.propietario_id ? O(DB.profile.propietario_id) : null;
+const misProps = () => { const o = miOwner(); return o ? DB.props.filter(p => p.propietario_id === o.id) : []; };
 
 const fichajeAbierto = empId => DB.fichajes.find(f => f.empleado_id === empId && !f.salida);
 const pausaAbierta = ficId => DB.pausas.find(p => p.fichaje_id === ficId && !p.fin);
@@ -331,6 +336,50 @@ async function dbBorrarAusencia(id) {
   const { error } = await DB.sb.from("ausencias").delete().eq("id", id);
   if (error) return limpiaErr(error.message);
   await dbCargarTodo(); return null;
+}
+
+/* ---------- reseñas y mejoras (portal del propietario) ---------- */
+async function dbCrearResena(payload) {
+  const { error } = await DB.sb.from("resenas").insert(payload);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbBorrarResena(id) {
+  const { error } = await DB.sb.from("resenas").delete().eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbGuardarMejora(payload, id) {
+  const r = id ? await DB.sb.from("mejoras").update(payload).eq("id", id)
+               : await DB.sb.from("mejoras").insert(payload);
+  if (r.error) return limpiaErr(r.error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbEstadoMejora(id, estado) {
+  const cambios = { estado };
+  if (estado === "implementada") cambios.implementada_at = hoyISO();
+  const { error } = await DB.sb.from("mejoras").update(cambios).eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbBorrarMejora(id) {
+  const { error } = await DB.sb.from("mejoras").delete().eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbVincularProp(propId, ownerId) {
+  const { error } = await DB.sb.from("propiedades").update({ propietario_id: ownerId }).eq("id", propId);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+/* impacto de una mejora: € por noche × noches del mes (mes anterior como referencia) */
+function nochesReferencia(propId) {
+  const prev = statsMesProp(propId, addMeses(mesISO(), -1)).noches;
+  return prev || statsMesProp(propId, mesISO()).noches || 0;
+}
+function ingresoExtraMejora(m, mes) {
+  if (m.estado !== "implementada") return 0;
+  return (+m.incremento_precio || 0) * statsMesProp(m.propiedad_id, mes || mesISO()).noches;
 }
 /* días pasados con trabajo asignado, sin fichaje y sin ausencia registrada */
 function diasSinFichar(empId, desde) {

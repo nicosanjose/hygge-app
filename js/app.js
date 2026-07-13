@@ -6,6 +6,7 @@ const STATE = {
   role: null, route: "dashboard",
   prop: null, propTab: "resumen", propQ: "", propMes: null,
   incFilter: "abiertas", factFilter: "todas", planDia: null, fichDia: null, repMes: null,
+  owner: null, ownerTab: "props", ownProp: null, liqMes: null, mejorasSel: new Set(),
 };
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -23,6 +24,9 @@ const NAV = {
   equipo: [
     ["Mi trabajo", [["midia", "Mi día", "sun"], ["mishoras", "Mis horas", "clock"], ["misincidencias", "Incidencias", "alert"]]],
   ],
+  propietario: [
+    ["Tu casa", [["ownerhome", "Mi propiedad", "house"], ["ownerresenas", "Reseñas", "star"], ["ownermejoras", "Mejoras", "chart"], ["ownerliq", "Liquidaciones", "euro"]]],
+  ],
 };
 function renderNav() {
   const incAb = DB.incidencias.filter(i => i.estado === "abierta").length;
@@ -34,12 +38,13 @@ function renderNav() {
         ${id === "incidencias" && incAb && rolDireccion() ? `<span class="pill">${incAb}</span>` : ""}
       </button>`).join("")}`).join("");
   const nombre = DB.profile?.nombre || "Usuario";
+  const rolTxt = rolDireccion() ? "Dirección" : STATE.role === "propietario" ? "Propietario" : "Equipo";
   $("#sb-user").innerHTML = `
-    <span class="ava" style="background:${rolDireccion() ? "var(--gold)" : (miEmp()?.color || "#4f8a5c")}">${ini(nombre)}</span>
-    <div style="flex:1"><div class="n">${esc(nombre)}</div><div class="r">${rolDireccion() ? "Dirección" : "Equipo"}</div></div>`;
+    <span class="ava" style="background:${rolDireccion() || STATE.role === "propietario" ? "var(--gold)" : (miEmp()?.color || "#4f8a5c")}">${ini(nombre)}</span>
+    <div style="flex:1"><div class="n">${esc(nombre)}</div><div class="r">${rolTxt}</div></div>`;
   $("#user-btn").textContent = ini(nombre);
   $("#user-drop-nombre").textContent = nombre;
-  $("#user-drop-rol").textContent = rolDireccion() ? "Dirección · acceso total" : "Equipo · " + (miEmp()?.rol_laboral || "");
+  $("#user-drop-rol").textContent = rolDireccion() ? "Dirección · acceso total" : STATE.role === "propietario" ? "Propietario · " + (misProps()[0]?.nombre || "") : "Equipo · " + (miEmp()?.rol_laboral || "");
   $("#menu-ajustes").style.display = rolDireccion() ? "" : "none";
 }
 function go(route) {
@@ -49,9 +54,10 @@ function go(route) {
   rerender();
   window.scrollTo({ top: 0 });
 }
+const rutaInicio = () => rolDireccion() ? "dashboard" : STATE.role === "propietario" ? "ownerhome" : "midia";
 function rerender(keepFocus) {
   if (!STATE.role) return;
-  const v = VIEWS[STATE.route] || VIEWS[rolDireccion() ? "dashboard" : "midia"];
+  const v = VIEWS[STATE.route] || VIEWS[rutaInicio()];
   let selStart = 0, hadFocus = false;
   if (keepFocus && document.activeElement?.tagName === "INPUT" && document.activeElement.closest("#content")) {
     hadFocus = true; selStart = document.activeElement.selectionStart;
@@ -68,6 +74,7 @@ document.addEventListener("click", e => {
   const pr = e.target.closest("[data-prop]"); if (pr) { STATE.prop = +pr.dataset.prop; STATE.propTab = "resumen"; STATE.propMes = null; go("propdetail"); return; }
   const prg = e.target.closest("[data-prop-go]"); if (prg) { STATE.prop = +prg.dataset.propGo; STATE.propTab = "resumen"; go("propdetail"); return; }
   const tr = e.target.closest("[data-trab]"); if (tr) { STATE.trab = +tr.dataset.trab; STATE.trabTab = "resumen"; STATE.trabMes = null; go("trabajadordetail"); return; }
+  const ow = e.target.closest("[data-owner]"); if (ow) { STATE.owner = +ow.dataset.owner; STATE.ownerTab = "props"; go("propietariodetail"); return; }
   const em = e.target.closest("[data-emp]"); if (em) { const emp = S(+em.dataset.emp); if (emp) openDrawer(drawerEmpleado(emp)); return; }
   const inc = e.target.closest("[data-inc]"); if (inc) { abrirIncidencia(+inc.dataset.inc); return; }
 });
@@ -128,7 +135,7 @@ async function bootSesion() {
 }
 async function entrar() {
   STATE.role = DB.profile.rol;
-  STATE.route = rolDireccion() ? "dashboard" : "midia";
+  STATE.route = rutaInicio();
   if (loginAnim) cancelAnimationFrame(loginAnim);
   $("#login").classList.add("hidden");
   $("#pendiente").style.display = "none";
@@ -1006,6 +1013,115 @@ async function activarDireccionUI(uid) {
   const err = await dbActivarDireccion(uid);
   if (err) return toast("No se pudo activar", err, ICON.alert, "terra");
   toast("Cuenta activada como dirección", "", ICON.check, "ok"); rerender();
+}
+
+/* ============================================================
+   RESEÑAS Y MEJORAS (portal del propietario)
+   ============================================================ */
+function propsDeOwner(ownerId) { return DB.props.filter(p => p.propietario_id === ownerId); }
+function openResenaForm(ownerId) {
+  const propsO = propsDeOwner(ownerId);
+  if (!propsO.length) return toast("Vincula primero una propiedad", "", ICON.alert, "terra");
+  openModal(`
+    <div class="modal-head"><h3>Añadir reseña</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field"><label>Propiedad</label><select id="rs-prop">${propsO.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Puntuación</label><select id="rs-punt">${[5, 4, 3, 2, 1].map(n => `<option value="${n}">${"★".repeat(n)} (${n})</option>`).join("")}</select></div>
+      <div class="f-field"><label>Huésped</label><input id="rs-autor" placeholder="Ej. Familia Weber"></div>
+      <div class="f-field"><label>Canal</label><select id="rs-canal">${["Airbnb", "Booking", "Vrbo", "Directa"].map(c => `<option>${c}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Fecha</label><input id="rs-fecha" type="date" value="${hoyISO()}"></div>
+      <div class="f-field full"><label>Texto de la reseña</label><textarea id="rs-texto" placeholder="Copia aquí la reseña tal cual la escribió el huésped"></textarea></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarResena()">${ICON.check} Guardar reseña</button>
+    </div>`);
+}
+async function guardarResena() {
+  const err = await dbCrearResena({
+    propiedad_id: +fval("rs-prop"), puntuacion: +fval("rs-punt"), autor: fval("rs-autor") || null,
+    canal: fval("rs-canal"), fecha: fval("rs-fecha") || hoyISO(), texto: fval("rs-texto") || null,
+  });
+  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  closeModal(); toast("Reseña añadida", "El propietario ya la ve en su portal.", ICON.star, "ok"); rerender();
+}
+async function borrarResenaUI(id) {
+  if (!confirm("¿Eliminar esta reseña?")) return;
+  const err = await dbBorrarResena(id);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Reseña eliminada", "", ICON.trash); rerender();
+}
+function openMejoraForm(ownerId, mejoraId) {
+  const propsO = propsDeOwner(ownerId);
+  if (!propsO.length) return toast("Vincula primero una propiedad", "", ICON.alert, "terra");
+  const m = mejoraId ? DB.mejoras.find(x => x.id === mejoraId) : {};
+  openModal(`
+    <div class="modal-head"><h3>${mejoraId ? "Editar propuesta" : "Nueva propuesta de mejora"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Mejora *</label><input id="mj-titulo" value="${esc(m.titulo || "")}" placeholder="Ej. Colchonetas y toldo en la piscina · Gimnasio en el garaje"></div>
+      <div class="f-field"><label>Propiedad</label><select id="mj-prop">${propsO.map(p => `<option value="${p.id}" ${m.propiedad_id === p.id ? "selected" : ""}>${esc(p.nombre)}</option>`).join("")}</select></div>
+      <div class="f-field"><label>¿Quién la propone?</label>
+        <select id="mj-origen"><option value="inquilino" ${m.origen === "inquilino" ? "selected" : ""}>Inquilino / huésped</option><option value="agencia" ${m.origen !== "inquilino" ? "selected" : ""}>La agencia (Hygge)</option></select></div>
+      <div class="f-field"><label>Mejora de precio €/noche *</label><input id="mj-inc" type="number" step="0.5" min="0" value="${m.incremento_precio ?? ""}" placeholder="8"></div>
+      <div class="f-field"><label>Coste estimado €</label><input id="mj-coste" type="number" step="1" min="0" value="${m.coste_estimado ?? ""}" placeholder="opcional"></div>
+      <div class="f-field full"><label>Quién lo sugirió / detalle</label><input id="mj-autor" value="${esc(m.autor || "")}" placeholder="Ej. lo pidieron 3 huéspedes este verano"></div>
+      <div class="f-field full"><label>Descripción</label><textarea id="mj-desc">${esc(m.descripcion || "")}</textarea></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarMejora(${mejoraId || "null"})">${ICON.check} Guardar</button>
+    </div>`);
+}
+async function guardarMejora(id) {
+  const titulo = fval("mj-titulo");
+  if (!titulo) return toast("Falta el título de la mejora", "", ICON.alert, "terra");
+  const err = await dbGuardarMejora({
+    titulo, propiedad_id: +fval("mj-prop"), origen: fval("mj-origen"),
+    incremento_precio: fnum("mj-inc") || 0, coste_estimado: fnum("mj-coste"),
+    autor: fval("mj-autor") || null, descripcion: fval("mj-desc") || null,
+  }, id);
+  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  closeModal(); toast(id ? "Propuesta actualizada" : "Propuesta creada", titulo, ICON.check, "ok"); rerender();
+}
+async function estadoMejoraUI(id, estado) {
+  const err = await dbEstadoMejora(id, estado);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast(estado === "implementada" ? "Mejora implementada ✨" : "Propuesta descartada",
+    estado === "implementada" ? "Desde hoy suma a los ingresos del propietario." : "", ICON.check, estado === "implementada" ? "ok" : "");
+  rerender();
+}
+async function borrarMejoraUI(id) {
+  if (!confirm("¿Eliminar esta propuesta?")) return;
+  const err = await dbBorrarMejora(id);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  rerender();
+}
+async function vincularPropUI(ownerId) {
+  const propId = +fval("vinc-prop"); if (!propId) return;
+  const err = await dbVincularProp(propId, ownerId);
+  if (err) return toast("No se pudo vincular", err, ICON.alert, "terra");
+  toast("Propiedad vinculada", P(propId)?.nombre + " → " + O(ownerId)?.nombre, ICON.check, "ok"); rerender();
+}
+async function desvincularPropUI(propId) {
+  if (!confirm("¿Desvincular esta propiedad del propietario?")) return;
+  const err = await dbVincularProp(propId, null);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  rerender();
+}
+/* simulador del propietario */
+function toggleMejoraSel(id) {
+  if (STATE.mejorasSel.has(id)) STATE.mejorasSel.delete(id); else STATE.mejorasSel.add(id);
+  rerender();
+}
+async function aceptarMejorasSel() {
+  const ids = [...STATE.mejorasSel];
+  for (const id of ids) {
+    const err = await dbEstadoMejora(id, "aceptada");
+    if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  }
+  STATE.mejorasSel = new Set();
+  toast("¡Genial! Propuestas aceptadas", "Hygge Services se pone en marcha y te confirmará coste y fechas.", ICON.check, "ok");
+  rerender();
 }
 
 /* ============================================================
