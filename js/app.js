@@ -561,8 +561,10 @@ function openChecklist(id) {
 }
 async function tickChk(id, i, el) {
   const t = DB.tareas.find(x => x.id === id); if (!t) return;
-  t.checklist[i].ok = !t.checklist[i].ok;
   el.classList.toggle("on");
+  // la verdad es el DOM del modal: así ningún refresco en segundo plano pisa ticks en vuelo
+  const ons = $$("#modal-root .check-item").map(x => x.classList.contains("on"));
+  t.checklist = t.checklist.map((c, j) => ({ ...c, ok: ons[j] ?? c.ok }));
   const n = t.checklist.filter(c => c.ok).length;
   $("#chk-num").textContent = n + "/" + t.checklist.length;
   $("#chk-bar").style.width = (n / t.checklist.length * 100) + "%";
@@ -570,7 +572,8 @@ async function tickChk(id, i, el) {
   await DB.sb.from("tareas").update({ checklist: t.checklist }).eq("id", id);
 }
 async function tareaFinalizar(id) {
-  const err = await dbTareaEstado(id, { estado: "hecha", fin_real: new Date().toISOString() });
+  const t = DB.tareas.find(x => x.id === id);
+  const err = await dbTareaEstado(id, { estado: "hecha", fin_real: new Date().toISOString(), ...(t ? { checklist: t.checklist } : {}) });
   if (err) return toast("No se pudo finalizar", err, ICON.alert, "terra");
   dbPingPosicion();
   toast("¡Servicio terminado! ✨", "La oficina ya lo ve como hecho.", ICON.check, "ok"); rerender();
