@@ -589,5 +589,39 @@ do $$ begin alter publication supabase_realtime add table tareas;          excep
 do $$ begin alter publication supabase_realtime add table incidencias;     exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table compras;         exception when duplicate_object then null; end $$;
 
+-- ---------- CRM DE CLIENTES (huéspedes y su recurrencia) ----------
+
+create table if not exists clientes (
+  id         bigint generated always as identity primary key,
+  nombre     text not null,
+  telefono   text,
+  email      text,
+  idioma     text default 'es',
+  origen     text default 'Directa',            -- Airbnb / Booking / Vrbo / Directa...
+  notas      text,
+  created_at timestamptz not null default now()
+);
+create table if not exists cliente_contactos (
+  id         bigint generated always as identity primary key,
+  cliente_id bigint not null references clientes(id) on delete cascade,
+  via        text not null default 'whatsapp' check (via in ('whatsapp','email','llamada','encuentro','otro')),
+  nota       text,
+  autor      text,
+  fecha      timestamptz not null default now()
+);
+alter table reservas add column if not exists cliente_id bigint references clientes(id) on delete set null;
+create index if not exists idx_reservas_cliente on reservas (cliente_id);
+create index if not exists idx_clicontactos on cliente_contactos (cliente_id, fecha);
+
+-- el CRM es del negocio: solo dirección
+alter table clientes enable row level security;
+alter table cliente_contactos enable row level security;
+drop policy if exists clientes_all on clientes;
+create policy clientes_all on clientes for all to authenticated
+  using (is_direccion()) with check (is_direccion());
+drop policy if exists clicontactos_all on cliente_contactos;
+create policy clicontactos_all on cliente_contactos for all to authenticated
+  using (is_direccion()) with check (is_direccion());
+
 -- listo ✔
 select 'Schema Hygge instalado correctamente' as resultado;

@@ -50,7 +50,8 @@ Esto crea: tablas (propiedades con servicios contratados, reservas, tareas con f
 3. **Propietarios** → los dueños.
 4. **Propiedades** → cada casa con su propietario, licencia, **tarifa de gestión €/mes** y **tarifa por limpieza €** (alimentan las facturas y liquidaciones), foto y documentos.
 5. **Calendario de cada propiedad** → reservas (con importe si quieres liquidaciones automáticas).
-6. **Planificación** → los servicios del día y su equipo.
+6. **Clientes** → tu agenda de huéspedes: contacto, notas y sus estancias (puedes vincular reservas ya creadas). Los botones de WhatsApp/Email abren la conversación y dejan apuntado cuándo y cómo fue el último contacto — la clave para que el inquilino de este verano repita el que viene. Solo lo ve dirección.
+7. **Planificación** → los servicios del día y su equipo.
 
 ## Dónde está desplegado
 
@@ -63,5 +64,4 @@ Esto crea: tablas (propiedades con servicios contratados, reservas, tareas con f
 - Sincronización automática iCal con Airbnb/Booking (v1: reservas a mano en 20 segundos).
 - Envío de emails desde la app (v1: los informes se descargan en PDF y se envían con tu correo).
 - VeriFactu real contra la AEAT (v1: numeración correlativa e inalterable, lista para conectar).
-- Portal del propietario (cuentas de solo lectura para los dueños).
 - Gestión de vacaciones del equipo.

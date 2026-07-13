@@ -7,6 +7,7 @@ const STATE = {
   prop: null, propTab: "resumen", propQ: "", propMes: null,
   incFilter: "abiertas", factFilter: "todas", planDia: null, fichDia: null, repMes: null,
   owner: null, ownerTab: "props", ownProp: null, liqMes: null, mejorasSel: new Set(),
+  cli: null, cliQ: "",
 };
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -18,7 +19,7 @@ const rolDireccion = () => STATE.role === "direccion";
 const NAV = {
   direccion: [
     ["Operativa", [["dashboard", "Inicio", "home"], ["plan", "Planificación", "cal"], ["equipo", "Equipo en vivo", "pin"], ["fichajes", "Fichajes", "clock"], ["incidencias", "Incidencias", "alert"]]],
-    ["Negocio", [["propiedades", "Propiedades", "house"], ["trabajadores", "Trabajadores", "id"], ["propietarios", "Propietarios", "users"]]],
+    ["Negocio", [["propiedades", "Propiedades", "house"], ["trabajadores", "Trabajadores", "id"], ["propietarios", "Propietarios", "users"], ["clientes", "Clientes", "chat"]]],
     ["Administración", [["informes", "Informes", "doc"], ["facturacion", "Facturación", "invoice"], ["ajustes", "Ajustes", "settings"]]],
   ],
   equipo: [
@@ -75,6 +76,7 @@ document.addEventListener("click", e => {
   const prg = e.target.closest("[data-prop-go]"); if (prg) { STATE.prop = +prg.dataset.propGo; STATE.propTab = "resumen"; go("propdetail"); return; }
   const tr = e.target.closest("[data-trab]"); if (tr) { STATE.trab = +tr.dataset.trab; STATE.trabTab = "resumen"; STATE.trabMes = null; go("trabajadordetail"); return; }
   const ow = e.target.closest("[data-owner]"); if (ow) { STATE.owner = +ow.dataset.owner; STATE.ownerTab = "props"; go("propietariodetail"); return; }
+  const cl = e.target.closest("[data-cli]"); if (cl) { STATE.cli = +cl.dataset.cli; go("clientedetail"); return; }
   const em = e.target.closest("[data-emp]"); if (em) { const emp = S(+em.dataset.emp); if (emp) openDrawer(drawerEmpleado(emp)); return; }
   const inc = e.target.closest("[data-inc]"); if (inc) { abrirIncidencia(+inc.dataset.inc); return; }
 });
@@ -289,7 +291,9 @@ function searchInput(v) {
     .map(p => `<button class="tb-hit" data-prop="${p.id}">${ICON.house} ${esc(p.nombre)} <span class="k">${esc(p.zona || "")}</span></button>`);
   const emps = rolDireccion() ? DB.emp.filter(s => (s.nombre + " " + s.rol_laboral).toLowerCase().includes(q)).slice(0, 4)
     .map(s => `<button class="tb-hit" data-emp="${s.id}">${ICON.users} ${esc(s.nombre)} <span class="k">${esc(s.rol_laboral)}</span></button>`) : [];
-  box.innerHTML = [...props, ...emps].join("") || `<div class="tb-hit">Sin resultados</div>`;
+  const clis = rolDireccion() ? DB.clientes.filter(c => (c.nombre + " " + (c.email || "") + " " + (c.telefono || "")).toLowerCase().includes(q)).slice(0, 3)
+    .map(c => `<button class="tb-hit" data-cli="${c.id}">${ICON.chat} ${esc(c.nombre)} <span class="k">cliente</span></button>`) : [];
+  box.innerHTML = [...props, ...emps, ...clis].join("") || `<div class="tb-hit">Sin resultados</div>`;
   box.classList.add("open");
 }
 document.addEventListener("click", e => { if (!e.target.closest(".tb-search")) $("#tb-results")?.classList.remove("open"); });
@@ -423,7 +427,8 @@ function openReservaForm(propId, fecha) {
       <div class="f-field"><label>Plazas</label><input id="rf-plazas" type="number" min="1" value="${p.plazas || ""}"></div>
       <div class="f-field"><label>Huésped</label><input id="rf-huesped" placeholder="Opcional"></div>
       <div class="f-field"><label>Importe € (para liquidaciones)</label><input id="rf-importe" type="number" step="0.01" min="0" placeholder="Opcional"></div>
-      <div class="f-field full"><label>Tipo</label><select id="rf-estado"><option value="confirmada">Reserva confirmada</option><option value="bloqueo">Bloqueo (propietario / obras)</option></select></div>
+      <div class="f-field"><label>Tipo</label><select id="rf-estado"><option value="confirmada">Reserva confirmada</option><option value="bloqueo">Bloqueo (propietario / obras)</option></select></div>
+      <div class="f-field"><label>Cliente (agenda)</label><select id="rf-cliente"><option value="">— sin vincular —</option>${DB.clientes.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join("")}</select></div>
     </div></div>
     <div class="modal-foot">
       <button class="btn outline" onclick="closeModal()">Cancelar</button>
@@ -436,7 +441,7 @@ async function guardarReserva(propId) {
   const err = await dbCrearReserva({
     propiedad_id: propId, entrada, salida, hora_entrada: fval("rf-hin") || null, hora_salida: fval("rf-hout") || null,
     canal: fval("rf-canal"), plazas: fnum("rf-plazas"), huesped: fval("rf-huesped") || null,
-    importe: fnum("rf-importe"), estado: fval("rf-estado"),
+    importe: fnum("rf-importe"), estado: fval("rf-estado"), cliente_id: fnum("rf-cliente"),
   });
   if (err) return toast("No se pudo crear", err, ICON.alert, "terra");
   closeModal(); toast("Reserva guardada", fmtCorto(entrada) + " → " + fmtCorto(salida), ICON.check, "ok");
@@ -471,6 +476,90 @@ async function guardarOwner(id) {
   if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
   closeModal(); toast(id ? "Propietario actualizado" : "Propietario creado", nombre, ICON.check, "ok"); rerender();
 }
+/* ---------- CRM de clientes ---------- */
+function openClienteForm(id) {
+  const c = id ? CL(id) : {};
+  openModal(`
+    <div class="modal-head"><h3>${id ? "Editar cliente" : "Nuevo cliente"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Nombre *</label><input id="cf-nombre" value="${esc(c.nombre || "")}" placeholder="Fam. Sørensen"></div>
+      <div class="f-field"><label>Teléfono (con prefijo, para WhatsApp)</label><input id="cf-tel" value="${esc(c.telefono || "")}" placeholder="+45 20 12 34 56"></div>
+      <div class="f-field"><label>Email</label><input id="cf-email" type="email" value="${esc(c.email || "")}"></div>
+      <div class="f-field"><label>Cómo llegó</label><select id="cf-origen">${["Airbnb", "Booking", "Vrbo", "Directa", "Recomendación"].map(o => `<option ${(c.origen || "Directa") === o ? "selected" : ""}>${o}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Idioma</label><select id="cf-idioma">${["es", "en", "de", "da", "sv", "fr"].map(l => `<option ${(c.idioma || "es") === l ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div class="f-field full"><label>Notas</label><textarea id="cf-notas" placeholder="Preferencias, mascotas, fechas habituales, qué villa le encaja…">${esc(c.notas || "")}</textarea></div>
+    </div></div>
+    <div class="modal-foot">
+      ${id ? `<button class="btn outline" style="color:var(--terra);margin-right:auto" onclick="borrarClienteUI(${id})">${ICON.trash} Eliminar</button>` : ""}
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarCliente(${id || "null"})">${ICON.check} Guardar</button>
+    </div>`);
+}
+async function guardarCliente(id) {
+  const nombre = fval("cf-nombre");
+  if (!nombre) return toast("Falta el nombre", "", ICON.alert, "terra");
+  const err = await dbGuardarCliente({ nombre, telefono: fval("cf-tel") || null, email: fval("cf-email") || null, origen: fval("cf-origen"), idioma: fval("cf-idioma"), notas: fval("cf-notas") || null }, id);
+  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  closeModal(); toast(id ? "Cliente actualizado" : "Cliente añadido", nombre, ICON.check, "ok"); rerender();
+}
+async function borrarClienteUI(id) {
+  const c = CL(id); if (!c) return;
+  if (!confirm(`¿Eliminar a ${c.nombre} de la agenda? Se borra también su historial de contactos (sus reservas se conservan).`)) return;
+  const err = await dbBorrarCliente(id);
+  if (err) return toast("No se pudo eliminar", err, ICON.alert, "terra");
+  closeModal(); toast("Cliente eliminado", c.nombre, ICON.trash);
+  if (STATE.route === "clientedetail") STATE.route = "clientes";
+  rerender();
+}
+function openContactoForm(clienteId) {
+  openModal(`
+    <div class="modal-head"><h3>Registrar contacto</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field"><label>Cómo</label><select id="ct-via">${[["whatsapp", "WhatsApp"], ["email", "Email"], ["llamada", "Llamada"], ["encuentro", "En persona"], ["otro", "Otro"]].map(v => `<option value="${v[0]}">${v[1]}</option>`).join("")}</select></div>
+      <div class="f-field full"><label>Nota</label><textarea id="ct-nota" placeholder="Ej. Le pasamos fechas libres de agosto; queda en confirmar."></textarea></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarContacto(${clienteId})">${ICON.check} Guardar</button>
+    </div>`);
+}
+async function guardarContacto(clienteId) {
+  const err = await dbRegistrarContacto(clienteId, fval("ct-via"), fval("ct-nota"));
+  if (err) return toast("No se pudo registrar", err, ICON.alert, "terra");
+  closeModal(); toast("Contacto registrado", "", ICON.check, "ok"); rerender();
+}
+async function borrarContactoUI(id) {
+  const err = await dbBorrarContacto(id);
+  if (err) return toast("No se pudo borrar", err, ICON.alert, "terra");
+  rerender();
+}
+/* abre WhatsApp/email y deja registrado el contacto en su historial */
+async function contactarCliente(id, via) {
+  const c = CL(id); if (!c) return;
+  const saludo = `Hola${c.nombre ? " " + c.nombre.replace(/^(Fam\.|Familia|Sr\.|Sra\.|Mr\.|Mrs\.)\s*/i, "").split(" ")[0] : ""}, somos Hygge Services Mallorca 🌿`;
+  if (via === "whatsapp") {
+    const n = telWa(c.telefono);
+    if (!n) return toast("Sin teléfono", "Añade su número en la ficha para escribirle por WhatsApp.", ICON.alert, "terra");
+    window.open(`https://wa.me/${n}?text=${encodeURIComponent(saludo)}`, "_blank", "noopener");
+  } else {
+    if (!c.email) return toast("Sin email", "Añade su correo en la ficha.", ICON.alert, "terra");
+    window.open(`mailto:${c.email}?subject=${encodeURIComponent("Hygge Services Mallorca")}&body=${encodeURIComponent(saludo)}`, "_blank", "noopener");
+  }
+  const err = await dbRegistrarContacto(id, via, "Mensaje enviado desde el portal");
+  if (!err) { toast("Contacto registrado", `${via === "whatsapp" ? "WhatsApp" : "Email"} a ${c.nombre}`, ICON.chat, "ok"); rerender(); }
+}
+async function vincularReservaCli(clienteId) {
+  const rid = +fval("cli-res-vinc"); if (!rid) return;
+  const err = await dbVincularReservaCliente(rid, clienteId);
+  if (err) return toast("No se pudo vincular", err, ICON.alert, "terra");
+  toast("Reserva vinculada", "Ya cuenta en su historial de estancias.", ICON.check, "ok"); rerender();
+}
+async function desvincularReservaCli(reservaId) {
+  const err = await dbVincularReservaCliente(reservaId, null);
+  if (err) return toast("No se pudo quitar", err, ICON.alert, "terra");
+  rerender();
+}
+
 function openEmpForm(id) {
   const e = id ? S(id) : {};
   const d = id ? ED(id) : {};

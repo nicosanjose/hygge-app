@@ -51,6 +51,8 @@ const ICON = {
   gps:     I('<circle cx="12" cy="12" r="3"/><path d="M12 2.5V6M12 18v3.5M2.5 12H6M18 12h3.5"/>'),
   id:      I('<rect x="3" y="5" width="18" height="14.5" rx="2.5"/><circle cx="8.8" cy="11" r="2.1"/><path d="M5.8 16.3c.5-1.7 1.7-2.6 3-2.6s2.5.9 3 2.6"/><path d="M14.5 9.5h4M14.5 12.5h4M14.5 15.5h2.6"/>'),
   star:    I('<path d="m12 4 2.4 5 5.6.7-4.1 3.8 1.1 5.5L12 16.2 7 19l1.1-5.5L4 9.7 9.6 9Z"/>'),
+  chat:    I('<path d="M21 11.7a8.3 8.3 0 0 1-8.3 8.3c-1.5 0-2.9-.4-4.1-1L3.5 20l1.1-4.4a8.3 8.3 0 1 1 16.4-3.9z"/>'),
+  mail:    I('<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m3.5 7.5 8.5 6 8.5-6"/>'),
 };
 
 const EST = {
@@ -1439,6 +1441,115 @@ function paperLiqOwner(o, mes) {
 }
 
 /* ============================================================
+   CRM DE CLIENTES · huéspedes y recurrencia
+   ============================================================ */
+const VIA_TXT = { whatsapp: "WhatsApp", email: "Email", llamada: "Llamada", encuentro: "En persona", otro: "Otro" };
+function chipUltimoContacto(c) {
+  const uc = ultimoContacto(c.id);
+  if (!uc) return `<span class="chip terra">Sin contactar</span>`;
+  const d = diasDesde(uc.fecha);
+  return `<span class="chip ${d > 90 ? "gold" : "ok"}">${VIA_TXT[uc.via] || esc(uc.via)} · ${haceTxt(uc.fecha)}</span>`;
+}
+function botonesContacto(c, xs) {
+  const cls = xs ? "btn xs" : "btn sm";
+  return `${c.telefono ? `<button class="${cls} sage" onclick="event.stopPropagation();contactarCliente(${c.id},'whatsapp')">${ICON.chat} WhatsApp</button>` : ""}
+    ${c.email ? `<button class="${cls} outline" onclick="event.stopPropagation();contactarCliente(${c.id},'email')">${ICON.mail} Email</button>` : ""}`;
+}
+function viewClientes() {
+  if (!DB.clientes.length) return vacio(ICON.chat, "Aún no hay clientes en tu agenda",
+    "Un huésped que repite vale oro: reserva directa, sin comisión de portal y con la confianza ya ganada. Guarda aquí a tus inquilinos y mantén vivo el contacto para que vuelvan cada temporada.",
+    `<button class="btn primary" onclick="openClienteForm()">${ICON.plus} Añadir cliente</button>`);
+  const q = (STATE.cliQ || "").toLowerCase();
+  const lista = DB.clientes
+    .filter(c => (c.nombre + " " + (c.email || "") + " " + (c.telefono || "") + " " + (c.origen || "")).toLowerCase().includes(q))
+    .map(c => ({ c, est: estanciasCliente(c.id) }))
+    .sort((a, b) => (b.est[0]?.entrada || "").localeCompare(a.est[0]?.entrada || "") || a.c.nombre.localeCompare(b.c.nombre));
+  const recurrentes = DB.clientes.filter(c => estanciasCliente(c.id).length >= 2).length;
+  const frios = DB.clientes.filter(c => { const uc = ultimoContacto(c.id); return !uc || diasDesde(uc.fecha) > 90; }).length;
+  return `
+  <div class="kpis" style="margin-bottom:16px">
+    <div class="kpi"><div class="lab">${ICON.users} Clientes</div><div class="val">${DB.clientes.length}</div><div class="sub">en tu agenda</div></div>
+    <div class="kpi"><div class="lab">${ICON.star} Recurrentes</div><div class="val">${recurrentes}</div><div class="sub">con 2 o más estancias</div></div>
+    <div class="kpi"><div class="lab">${ICON.chat} Por retomar</div><div class="val">${frios}</div><div class="sub">sin contacto en 3 meses</div></div>
+  </div>
+  <div class="toolbar">
+    <input class="input" style="min-width:220px" placeholder="Buscar cliente, email o teléfono…" value="${esc(STATE.cliQ || "")}" oninput="STATE.cliQ=this.value;rerender(true)">
+    <span class="hint">Toca a un cliente para ver sus estancias y el historial de comunicación.</span>
+    <div class="spacer"></div>
+    <button class="btn primary sm" onclick="openClienteForm()">${ICON.plus} Nuevo cliente</button></div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Cliente</th><th>Contacto</th><th>Estancias</th><th>Último contacto</th><th></th></tr></thead>
+    <tbody>${lista.map(({ c, est }) => `
+      <tr data-cli="${c.id}" style="cursor:pointer">
+      <td><b>${esc(c.nombre)}</b> ${est.length >= 2 ? `<span class="chip gold" title="Ha repetido estancia">★ recurrente</span>` : ""}
+        <div class="hint">${esc(c.origen || "")}${c.idioma ? " · " + esc(c.idioma) : ""}</div></td>
+      <td style="font-size:13px">${c.telefono ? esc(c.telefono) : ""}${c.telefono && c.email ? "<br>" : ""}${c.email ? esc(c.email) : (c.telefono ? "" : "—")}</td>
+      <td>${est.length ? (est[0].entrada > hoyISO() ? `<b>${est.length}</b> · próxima el ${fmtCorto(est[0].entrada)}` : `<b>${est.length}</b> · última ${haceTxt(est[0].entrada + "T12:00")}`) : '<span class="hint">sin estancias aún</span>'}</td>
+      <td>${chipUltimoContacto(c)}</td>
+      <td class="num" style="white-space:nowrap">${botonesContacto(c, true)}
+        <button class="btn xs outline" onclick="event.stopPropagation();openClienteForm(${c.id})">${ICON.edit}</button></td>
+      </tr>`).join("")}
+    </tbody></table></div>`;
+}
+function viewClienteDetail() {
+  const c = CL(STATE.cli); if (!c) { STATE.route = "clientes"; return viewClientes(); }
+  const est = estanciasCliente(c.id);
+  const contactos = contactosDe(c.id);
+  const noches = est.reduce((a, r) => a + Math.round((new Date(r.salida + "T12:00") - new Date(r.entrada + "T12:00")) / 864e5), 0);
+  const gasto = est.reduce((a, r) => a + (+r.importe || 0), 0);
+  const uc = ultimoContacto(c.id);
+  const proxima = est.filter(r => r.entrada > hoyISO()).pop();
+  const pasadas = est.filter(r => r.entrada <= hoyISO());
+  const sueltas = DB.reservas.filter(r => !r.cliente_id && r.estado !== "bloqueo" && r.huesped).sort((a, b) => b.entrada.localeCompare(a.entrada));
+  const retomar = !proxima && pasadas[0] && pasadas[0].salida < hoyISO() && (!uc || new Date(uc.fecha) < new Date(pasadas[0].salida + "T12:00"));
+  return `
+  <button class="btn sm outline" style="margin-bottom:14px" data-go="clientes">${ICON.back} Clientes</button>
+  <div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+    <span class="mini-ava" style="width:44px;height:44px;font-size:15px;background:var(--gold)">${ini(c.nombre)}</span>
+    <div style="flex:1;min-width:200px"><b style="font-size:18px">${esc(c.nombre)}</b>
+      ${est.length >= 2 ? `<span class="chip gold" style="margin-left:8px">★ recurrente</span>` : ""}
+      <div class="hint">${esc(c.origen || "")}${c.idioma ? " · idioma " + esc(c.idioma) : ""}${c.telefono ? " · " + esc(c.telefono) : ""}${c.email ? " · " + esc(c.email) : ""}</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${botonesContacto(c)}
+      <button class="btn sm outline" onclick="openClienteForm(${c.id})">${ICON.edit} Editar</button></div>
+  </div>
+  ${retomar ? `<div class="card aviso-cli" style="margin-bottom:16px;border-left:4px solid var(--gold)"><b style="font-size:13.5px">${ICON.chat} Buen momento para escribirle</b>
+    <p class="hint" style="margin-top:4px">Su última estancia terminó ${haceTxt(pasadas[0].salida + "T12:00")} y no le habéis contactado después. Un mensaje a tiempo es la mejor forma de que repita el próximo verano.</p></div>` : ""}
+  <div class="kpis" style="margin-bottom:16px">
+    <div class="kpi"><div class="lab">${ICON.cal} Estancias</div><div class="val">${est.length}</div><div class="sub">${proxima ? "entra el " + fmtCorto(proxima.entrada) : pasadas[0] ? "última " + haceTxt(pasadas[0].entrada + "T12:00") : "todavía ninguna"}</div></div>
+    <div class="kpi"><div class="lab">${ICON.sun} Noches</div><div class="val">${noches}</div><div class="sub">en total</div></div>
+    <div class="kpi"><div class="lab">${ICON.euro} Facturado</div><div class="val">${eur0(gasto)}</div><div class="sub">suma de sus reservas</div></div>
+    <div class="kpi"><div class="lab">${ICON.chat} Último contacto</div><div class="val" style="font-size:20px">${uc ? haceTxt(uc.fecha) : "nunca"}</div><div class="sub">${uc ? "por " + (VIA_TXT[uc.via] || esc(uc.via)).toLowerCase() : "aún sin contactar"}</div></div>
+  </div>
+  <div class="grid" style="grid-template-columns:1.1fr .9fr;align-items:start">
+    <div class="card">
+      <div class="card-head"><h3>Comunicación</h3>
+        <div class="right"><button class="btn sm sage" onclick="openContactoForm(${c.id})">${ICON.plus} Registrar contacto</button></div></div>
+      <p class="hint" style="margin-bottom:4px">Los botones de WhatsApp y Email dejan apuntado el contacto aquí automáticamente.</p>
+      ${contactos.length ? contactos.map(x => `
+        <div class="set-row"><div class="tx"><b>${VIA_TXT[x.via] || esc(x.via)}</b>
+          <span>${x.nota ? esc(x.nota) + " · " : ""}${fmtCorto(x.fecha.slice(0, 10))} (${haceTxt(x.fecha)})${x.autor ? " · " + esc(x.autor) : ""}</span></div>
+        <div class="end"><button class="btn xs outline" onclick="borrarContactoUI(${x.id})">${ICON.trash}</button></div></div>`).join("")
+      : `<p class="hint" style="padding:10px 0">Sin contactos registrados todavía.</p>`}
+    </div>
+    <div>
+      <div class="card">
+        <div class="card-head"><h3>Estancias</h3></div>
+        ${est.length ? est.map(r => `
+          <div class="set-row"><div class="tx"><b>${esc(P(r.propiedad_id)?.nombre || "Propiedad")}</b>
+            <span>${fmtCorto(r.entrada)} → ${fmtCorto(r.salida)}${r.canal ? " · " + esc(r.canal) : ""}${r.importe ? " · " + eur0(r.importe) : ""}</span></div>
+          <div class="end"><button class="btn xs outline" title="Quitar de este cliente" onclick="desvincularReservaCli(${r.id})">${ICON.x}</button></div></div>`).join("")
+        : `<p class="hint" style="padding:10px 0">Sin estancias vinculadas. Vincula sus reservas para ver su historial completo.</p>`}
+        ${sueltas.length ? `
+        <div class="set-row"><div class="tx" style="flex:1">
+          <select class="select" id="cli-res-vinc" style="max-width:100%">${sueltas.map(r => `<option value="${r.id}">${esc(r.huesped)} · ${esc(P(r.propiedad_id)?.nombre || "")} · ${fmtCorto(r.entrada)}</option>`).join("")}</select></div>
+        <div class="end"><button class="btn xs sage" onclick="vincularReservaCli(${c.id})">${ICON.plus} Vincular reserva</button></div></div>` : ""}
+      </div>
+      ${c.notas ? `<div class="card" style="margin-top:16px"><div class="card-head"><h3>Notas</h3></div><p style="font-size:13.5px;white-space:pre-wrap">${esc(c.notas)}</p></div>` : ""}
+    </div>
+  </div>`;
+}
+
+/* ============================================================
    PORTAL DEL PROPIETARIO (rol 'propietario')
    ============================================================ */
 function ownPropActual() {
@@ -1775,6 +1886,8 @@ const VIEWS = {
   facturacion:  { t: "Facturación",   c: "Borradores, emisión y cobros",       r: viewFacturacion,   m: () => {} },
   propietarios: { t: "Propietarios",  c: "Dueños, reseñas y mejoras",          r: viewPropietarios,  m: () => {} },
   propietariodetail: { t: "Propietario", c: "Propiedades, reseñas y mejoras",   r: viewPropietarioDetail, m: () => {} },
+  clientes:     { t: "Clientes",      c: "Huéspedes y recurrencia",            r: viewClientes,      m: () => {} },
+  clientedetail:{ t: "Cliente",       c: "Ficha, comunicación y estancias",    r: viewClienteDetail, m: () => {} },
   ajustes:      { t: "Ajustes",       c: "Empresa, usuarios y plantillas",     r: viewAjustes,       m: () => {} },
   midia:        { t: "Mi día",        c: "Fichaje, tareas e incidencias",      r: viewMiDia,         m: () => mountMiDia() },
   mishoras:     { t: "Mis horas",     c: "Tu registro de jornada",             r: viewMisHoras,      m: () => {} },

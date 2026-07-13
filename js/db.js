@@ -8,7 +8,8 @@ const DB = {
   session: null, profile: null,          // profile: {id, nombre, rol, empleado_id}
   emp: [], empDatos: [], props: [], owners: [], reservas: [], tareas: [],
   fichajes: [], pausas: [], posiciones: [], incidencias: [], eventos: [],
-  facturas: [], compras: [], ausencias: [], resenas: [], mejoras: [], ajustes: {}, pendientes: [],
+  facturas: [], compras: [], ausencias: [], resenas: [], mejoras: [],
+  clientes: [], clienteContactos: [], ajustes: {}, pendientes: [],
   fotoUrls: {},                          // path -> signed url (caché)
   cargado: false,
 };
@@ -63,7 +64,7 @@ const limpiaErr = m => (m || "").replace(/^.*?exception:?\s*/i, "").replace("new
 async function dbCargarTodo() {
   const desde = addDias(hoyISO(), -400), hasta = addDias(hoyISO(), 400);
   const q = (t, sel, mod) => { let x = DB.sb.from(t).select(sel || "*"); if (mod) x = mod(x); return x; };
-  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aus, rsn, mej, aj, pend] = await Promise.all([
+  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aus, rsn, mej, cli, cct, aj, pend] = await Promise.all([
     q("empleados", "*", x => x.order("nombre")),
     q("empleados_datos", "*"),
     q("propiedades", "*", x => x.order("nombre")),
@@ -80,6 +81,8 @@ async function dbCargarTodo() {
     q("ausencias", "*", x => x.order("fecha", { ascending: false })),
     q("resenas", "*", x => x.order("fecha", { ascending: false })),
     q("mejoras", "*", x => x.order("created_at", { ascending: false })),
+    q("clientes", "*", x => x.order("nombre")),
+    q("cliente_contactos", "*", x => x.order("fecha", { ascending: false })),
     q("ajustes", "*"),
     DB.sb.from("profiles").select("*").is("rol", null),
   ]);
@@ -90,6 +93,7 @@ async function dbCargarTodo() {
   DB.eventos = ev.data || []; DB.facturas = fac.data || []; DB.compras = com.data || [];
   DB.ausencias = aus.data || [];
   DB.resenas = rsn.data || []; DB.mejoras = mej.data || [];
+  DB.clientes = cli.data || []; DB.clienteContactos = cct.data || [];
   DB.ajustes = Object.fromEntries((aj.data || []).map(a => [a.clave, a.valor]));
   DB.pendientes = pend.data || [];
   DB.cargado = true;
@@ -115,6 +119,7 @@ const P = id => DB.props.find(p => p.id === id);
 const S = id => DB.emp.find(e => e.id === id);
 const O = id => DB.owners.find(o => o.id === id);
 const ED = id => DB.empDatos.find(d => d.empleado_id === id) || {};
+const CL = id => DB.clientes.find(c => c.id === id);
 const miEmp = () => DB.profile?.empleado_id ? S(DB.profile.empleado_id) : null;
 const miOwner = () => DB.profile?.propietario_id ? O(DB.profile.propietario_id) : null;
 const misProps = () => { const o = miOwner(); return o ? DB.props.filter(p => p.propietario_id === o.id) : []; };
@@ -372,6 +377,54 @@ async function dbVincularProp(propId, ownerId) {
   if (error) return limpiaErr(error.message);
   await dbCargarTodo(); return null;
 }
+/* ---------- CRM de clientes (recurrencia de huéspedes) ---------- */
+async function dbGuardarCliente(payload, id) {
+  const r = id ? await DB.sb.from("clientes").update(payload).eq("id", id)
+               : await DB.sb.from("clientes").insert(payload);
+  if (r.error) return limpiaErr(r.error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbBorrarCliente(id) {
+  const { error } = await DB.sb.from("clientes").delete().eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbRegistrarContacto(clienteId, via, nota) {
+  const { error } = await DB.sb.from("cliente_contactos").insert({ cliente_id: clienteId, via, nota: nota || null, autor: DB.profile?.nombre || null });
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbBorrarContacto(id) {
+  const { error } = await DB.sb.from("cliente_contactos").delete().eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbVincularReservaCliente(reservaId, clienteId) {
+  const { error } = await DB.sb.from("reservas").update({ cliente_id: clienteId }).eq("id", reservaId);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+const contactosDe = cid => DB.clienteContactos.filter(x => x.cliente_id === cid);
+const ultimoContacto = cid => contactosDe(cid)[0] || null;   // ya vienen ordenados desc
+const estanciasCliente = cid => DB.reservas.filter(r => r.cliente_id === cid && r.estado !== "bloqueo")
+  .slice().sort((a, b) => b.entrada.localeCompare(a.entrada));
+const diasDesde = fechaTs => fechaTs ? Math.floor((Date.now() - new Date(fechaTs)) / 864e5) : null;
+const haceTxt = fechaTs => {
+  const d = diasDesde(fechaTs);
+  if (d === null) return "nunca";
+  if (d <= 0) return "hoy";
+  if (d === 1) return "ayer";
+  if (d < 30) return `hace ${d} días`;
+  if (d < 365) return `hace ${Math.round(d / 30)} mes${d >= 60 ? "es" : ""}`;
+  return `hace más de ${Math.floor(d / 365)} año${d >= 730 ? "s" : ""}`;
+};
+/* teléfono → enlace wa.me (quita símbolos; si son 9 cifras, antepone 34) */
+function telWa(tel) {
+  let n = (tel || "").replace(/\D/g, "");
+  if (n.length === 9) n = "34" + n;
+  return n;
+}
+
 /* impacto de una mejora: € por noche × noches del mes (mes anterior como referencia) */
 function nochesReferencia(propId) {
   const prev = statsMesProp(propId, addMeses(mesISO(), -1)).noches;

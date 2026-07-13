@@ -963,3 +963,6 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 .check-item.sim.on span{text-decoration:none;opacity:1}
 .check-item.sim.on{background:var(--gold-soft);border-color:var(--gold-line)}
 .check-item.sim.on .bx{background:var(--gold);border-color:var(--gold)}
+
+/* ---------- CRM de clientes ---------- */
+.aviso-cli b svg{width:15px;height:15px;vertical-align:-3px;margin-right:4px}
