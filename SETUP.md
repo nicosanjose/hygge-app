@@ -41,13 +41,16 @@ Esto crea: tablas (propiedades, reservas, tareas, fichajes con GPS, incidencias 
 2. Cada persona abre la app en su móvil → **Crear cuenta** → pone el código → entra como **Equipo** (fichar, tareas, incidencias con foto).
 3. Consejo: en el móvil, "Añadir a pantalla de inicio" deja la app como una app más.
 
+> **¿Ya tenías el proyecto creado de antes?** El schema es seguro de re-ejecutar: cuando la app se actualice con módulos nuevos (p. ej. la ficha de Trabajadores con datos de contrato), vuelve a pegar `supabase/schema.sql` completo en el SQL Editor y listo. No borra nada.
+
 ## 7 · Rellenar datos reales (orden recomendado)
 
 1. **Ajustes** → datos de empresa (salen en informes y facturas) y checklist de limpieza.
-2. **Propietarios** → los dueños.
-3. **Propiedades** → cada casa con su propietario, licencia, **tarifa de gestión €/mes** y **tarifa por limpieza €** (alimentan las facturas y liquidaciones), foto y documentos.
-4. **Calendario de cada propiedad** → reservas (con importe si quieres liquidaciones automáticas).
-5. **Planificación** → los servicios del día y su equipo.
+2. **Trabajadores** → cada persona con sus datos de contrato (DNI, IBAN, relación laboral, tarifa €/h) y sus documentos; desde su ficha se genera su factura (autónomos) o recibo de horas (contrato) de cada mes. Los datos personales solo los ve dirección.
+3. **Propietarios** → los dueños.
+4. **Propiedades** → cada casa con su propietario, licencia, **tarifa de gestión €/mes** y **tarifa por limpieza €** (alimentan las facturas y liquidaciones), foto y documentos.
+5. **Calendario de cada propiedad** → reservas (con importe si quieres liquidaciones automáticas).
+6. **Planificación** → los servicios del día y su equipo.
 
 ## Dónde está desplegado
 

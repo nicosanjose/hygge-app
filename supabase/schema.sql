@@ -19,6 +19,20 @@ create table if not exists empleados (
   created_at     timestamptz not null default now()
 );
 
+-- datos sensibles del trabajador (contrato, fiscales) · SOLO dirección puede leerlos
+create table if not exists empleados_datos (
+  empleado_id   bigint primary key references empleados(id) on delete cascade,
+  dni           text,
+  nass          text,          -- nº afiliación seguridad social
+  email         text,
+  direccion     text,
+  iban          text,
+  fecha_alta    date,
+  tipo_relacion text not null default 'contrato' check (tipo_relacion in ('contrato','autonomo')),
+  tarifa_hora   numeric(8,2) default 0,
+  notas         text
+);
+
 create table if not exists profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   nombre      text,
@@ -298,6 +312,12 @@ drop policy if exists empleados_write on empleados;
 create policy empleados_write on empleados for all to authenticated
   using (is_direccion()) with check (is_direccion());
 
+-- datos sensibles de trabajadores: solo dirección
+alter table empleados_datos enable row level security;
+drop policy if exists empdatos_all on empleados_datos;
+create policy empdatos_all on empleados_datos for all to authenticated
+  using (is_direccion()) with check (is_direccion());
+
 -- propietarios: solo dirección
 drop policy if exists propietarios_all on propietarios;
 create policy propietarios_all on propietarios for all to authenticated
@@ -394,7 +414,8 @@ create policy fotos_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'fotos');
 drop policy if exists fotos_select on storage.objects;
 create policy fotos_select on storage.objects for select to authenticated
-  using (bucket_id = 'fotos');
+  using (bucket_id = 'fotos'
+         and (is_direccion() or (storage.foldername(name))[1] not in ('documentos','empleados')));
 drop policy if exists fotos_delete on storage.objects;
 create policy fotos_delete on storage.objects for delete to authenticated
   using (bucket_id = 'fotos' and is_direccion());

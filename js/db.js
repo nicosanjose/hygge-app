@@ -6,7 +6,7 @@
 const DB = {
   sb: null, ready: false,
   session: null, profile: null,          // profile: {id, nombre, rol, empleado_id}
-  emp: [], props: [], owners: [], reservas: [], tareas: [],
+  emp: [], empDatos: [], props: [], owners: [], reservas: [], tareas: [],
   fichajes: [], pausas: [], posiciones: [], incidencias: [], eventos: [],
   facturas: [], ajustes: {}, pendientes: [],
   fotoUrls: {},                          // path -> signed url (caché)
@@ -63,8 +63,9 @@ const limpiaErr = m => (m || "").replace(/^.*?exception:?\s*/i, "").replace("new
 async function dbCargarTodo() {
   const desde = addDias(hoyISO(), -400), hasta = addDias(hoyISO(), 400);
   const q = (t, sel, mod) => { let x = DB.sb.from(t).select(sel || "*"); if (mod) x = mod(x); return x; };
-  const [emp, props, owners, res, tar, fic, pau, pos, inc, ev, fac, aj, pend] = await Promise.all([
+  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, aj, pend] = await Promise.all([
     q("empleados", "*", x => x.order("nombre")),
+    q("empleados_datos", "*"),
     q("propiedades", "*", x => x.order("nombre")),
     q("propietarios", "*", x => x.order("nombre")),
     q("reservas", "*", x => x.gte("salida", desde).lte("entrada", hasta).order("entrada")),
@@ -78,7 +79,8 @@ async function dbCargarTodo() {
     q("ajustes", "*"),
     DB.sb.from("profiles").select("*").is("rol", null),
   ]);
-  DB.emp = emp.data || []; DB.props = props.data || []; DB.owners = owners.data || [];
+  DB.emp = emp.data || []; DB.empDatos = empd.data || [];
+  DB.props = props.data || []; DB.owners = owners.data || [];
   DB.reservas = res.data || []; DB.tareas = tar.data || []; DB.fichajes = fic.data || [];
   DB.pausas = pau.data || []; DB.posiciones = pos.data || []; DB.incidencias = inc.data || [];
   DB.eventos = ev.data || []; DB.facturas = fac.data || [];
@@ -105,6 +107,7 @@ function dbRealtime() {
 const P = id => DB.props.find(p => p.id === id);
 const S = id => DB.emp.find(e => e.id === id);
 const O = id => DB.owners.find(o => o.id === id);
+const ED = id => DB.empDatos.find(d => d.empleado_id === id) || {};
 const miEmp = () => DB.profile?.empleado_id ? S(DB.profile.empleado_id) : null;
 
 const fichajeAbierto = empId => DB.fichajes.find(f => f.empleado_id === empId && !f.salida);
@@ -208,11 +211,20 @@ async function dbGuardarOwner(payload, id) {
   if (r.error) return limpiaErr(r.error.message);
   await dbCargarTodo(); return null;
 }
-async function dbGuardarEmpleado(payload, id) {
+async function dbGuardarEmpleado(payload, id, datos) {
   const r = id ? await DB.sb.from("empleados").update(payload).eq("id", id).select().single()
                : await DB.sb.from("empleados").insert(payload).select().single();
   if (r.error) return { error: limpiaErr(r.error.message) };
+  if (datos) {
+    const rd = await DB.sb.from("empleados_datos").upsert({ empleado_id: r.data.id, ...datos });
+    if (rd.error) return { error: "Ficha guardada, pero los datos de contrato fallaron: " + limpiaErr(rd.error.message) + " (¿has ejecutado el schema actualizado?)" };
+  }
   await dbCargarTodo(); return { emp: r.data };
+}
+async function dbEliminarEmpleado(id) {
+  const { error } = await DB.sb.from("empleados").delete().eq("id", id);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
 }
 async function dbCrearReserva(payload) {
   const { error } = await DB.sb.from("reservas").insert(payload);
@@ -347,13 +359,13 @@ async function dbActivarDireccion(uid) {
   if (error) return limpiaErr(error.message);
   await dbCargarTodo(); return null;
 }
-async function dbSubirDocumento(propId, file) {
+async function dbSubirDocumento(prefix, file) {
   const limpio = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const path = `documentos/${propId}/${Date.now()}_${limpio}`;
+  const path = `${prefix}/${Date.now()}_${limpio}`;
   const ok = await dbSubirFoto(path, file);
   return ok ? null : "No se pudo subir el documento";
 }
-async function dbListarDocumentos(propId) {
-  const { data } = await DB.sb.storage.from("fotos").list(`documentos/${propId}`, { limit: 100, sortBy: { column: "created_at", order: "desc" } });
+async function dbListarDocumentos(prefix) {
+  const { data } = await DB.sb.storage.from("fotos").list(prefix, { limit: 100, sortBy: { column: "created_at", order: "desc" } });
   return (data || []).filter(d => d.name !== ".emptyFolderPlaceholder");
 }

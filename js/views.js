@@ -49,6 +49,7 @@ const ICON = {
   trash:   I('<path d="M5 7h14M9 7V4.5h6V7M8 7l.8 13h6.4L16 7"/>'),
   edit:    I('<path d="M4 20h4l11-11-4-4L4 16Z"/><path d="m13 7 4 4"/>'),
   gps:     I('<circle cx="12" cy="12" r="3"/><path d="M12 2.5V6M12 18v3.5M2.5 12H6M18 12h3.5"/>'),
+  id:      I('<rect x="3" y="5" width="18" height="14.5" rx="2.5"/><circle cx="8.8" cy="11" r="2.1"/><path d="M5.8 16.3c.5-1.7 1.7-2.6 3-2.6s2.5.9 3 2.6"/><path d="M14.5 9.5h4M14.5 12.5h4M14.5 15.5h2.6"/>'),
 };
 
 const EST = {
@@ -388,7 +389,7 @@ function viewPropDetail() {
     </div>`;
   if (tab === "docs") body = `
     <div class="card"><div class="card-head"><h3>Documentos</h3><span class="sub">contrato, licencia, inventario… quedan guardados en la nube</span>
-      <div class="right"><label class="file-btn">${ICON.plus} Subir documento<input type="file" onchange="subirDoc(${p.id}, this)"></label></div></div>
+      <div class="right"><label class="file-btn">${ICON.plus} Subir documento<input type="file" onchange="subirDoc('documentos/${p.id}', this)"></label></div></div>
       <div id="docs-list"><div class="lds"></div></div>
     </div>`;
   return `
@@ -414,7 +415,7 @@ function mountPropDetail() {
     });
     drawBars("chart-prop", data, { hi: 5 });
   }
-  if (STATE.propTab === "docs") cargarDocs(p.id);
+  if (STATE.propTab === "docs") cargarDocs(`documentos/${p.id}`);
   resolverFotos();
 }
 
@@ -511,10 +512,227 @@ function drawerEmpleado(e) {
         <span>${(t.hora_inicio || "").slice(0, 5)} · ${t.estado}</span></div>`).join("")}</div>`
     : `<p class="hint">Sin tareas asignadas hoy.</p>`}
     <div style="display:flex;gap:8px;margin-top:20px;flex-wrap:wrap">
+      <button class="btn sm primary" onclick="closeDrawer();STATE.trab=${e.id};STATE.trabTab='resumen';go('trabajadordetail')">${ICON.id} Ficha completa</button>
       <button class="btn sm outline" data-go="fichajes">${ICON.clock} Fichajes</button>
-      <button class="btn sm outline" onclick="openEmpForm(${e.id})">${ICON.edit} Editar ficha</button>
     </div>
   </div>`;
+}
+
+/* ============================================================
+   TRABAJADORES (negocio: lista + ficha completa)
+   ============================================================ */
+function viewTrabajadores() {
+  if (!DB.emp.length) return vacio(ICON.id, "Aún no hay trabajadores",
+    "Da de alta a cada persona con sus datos de contrato. Tendrás su ficha completa: horas, fichajes, documentos y su factura o recibo mensual.",
+    `<button class="btn primary" onclick="openEmpForm()">${ICON.plus} Añadir trabajador</button>`);
+  const mes = mesISO(), ini = mes + "-01";
+  const horasMes = e => horasEmpleadoRango(e.id, ini, hoyISO());
+  const activos = DB.emp.filter(e => e.activo);
+  const costeMes = DB.emp.reduce((a, e) => a + horasMes(e) * (+ED(e.id).tarifa_hora || 0), 0);
+  return `
+  <div class="kpis" style="margin-bottom:16px">
+    <div class="kpi"><div class="lab">${ICON.users} En plantilla</div><div class="val">${activos.length}</div><div class="sub">${DB.emp.length - activos.length ? (DB.emp.length - activos.length) + " de baja" : "todos activos"}</div></div>
+    <div class="kpi"><div class="lab">${ICON.id} Autónomos</div><div class="val">${DB.empDatos.filter(d => d.tipo_relacion === "autonomo").length}</div><div class="sub">facturan por horas</div></div>
+    <div class="kpi"><div class="lab">${ICON.clock} Horas del equipo · mes</div><div class="val">${DB.emp.reduce((a, e) => a + horasMes(e), 0).toLocaleString("es-ES")}<small>h</small></div><div class="sub">fichadas hasta hoy</div></div>
+    <div class="kpi"><div class="lab">${ICON.euro} Coste por horas · mes</div><div class="val">${eur0(costeMes)}</div><div class="sub">según tarifa €/h de cada ficha</div></div>
+  </div>
+  <div class="toolbar">
+    <span class="hint">Toca a una persona para abrir su ficha completa: contrato, documentos, actividad y su factura mensual.</span>
+    <div class="spacer"></div>
+    <button class="btn primary sm" onclick="openEmpForm()">${ICON.plus} Añadir trabajador</button>
+  </div>
+  <div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Trabajador</th><th>Puesto</th><th>Relación</th><th>Teléfono</th><th class="num">Horas mes</th><th class="num">Tarifa</th><th>Estado</th><th></th></tr></thead>
+    <tbody>${DB.emp.map(e => { const d = ED(e.id); return `
+      <tr data-trab="${e.id}" style="cursor:pointer">
+        <td><span class="who">${ava(e)} ${esc(e.nombre)}</span></td>
+        <td>${esc(e.rol_laboral)}</td>
+        <td>${d.tipo_relacion === "autonomo" ? '<span class="chip gold">Autónomo</span>' : '<span class="chip sage">Contrato</span>'}</td>
+        <td>${esc(e.telefono || "—")}</td>
+        <td class="num"><b>${horasMes(e).toLocaleString("es-ES")} h</b></td>
+        <td class="num">${+d.tarifa_hora ? eur(d.tarifa_hora) + "/h" : "—"}</td>
+        <td>${e.activo ? '<span class="chip ok">Activo</span>' : '<span class="chip gray">De baja</span>'}</td>
+        <td class="num" style="white-space:nowrap">
+          <button class="btn xs outline" onclick="event.stopPropagation();bajaTrabajador(${e.id})">${e.activo ? "Dar de baja" : "Reactivar"}</button>
+          <button class="btn xs outline" style="color:var(--terra)" onclick="event.stopPropagation();eliminarTrabajador(${e.id})">${ICON.trash}</button>
+        </td>
+      </tr>`; }).join("")}
+    </tbody></table></div>`;
+}
+
+function viewTrabajadorDetail() {
+  const e = S(STATE.trab); if (!e) { STATE.route = "trabajadores"; return viewTrabajadores(); }
+  const d = ED(e.id);
+  const tab = STATE.trabTab || "resumen";
+  const mes = STATE.trabMes || mesISO(), ini = mes + "-01", fin = addDias(addMeses(mes, 1) + "-01", -1);
+  const iniSemana = addDias(hoyISO(), -((new Date().getDay() + 6) % 7));
+  const horasMes = horasEmpleadoRango(e.id, ini, fin);
+  const tieneCuenta = !e.codigo_acceso ? true : false;
+  const tabs = [["resumen", "Resumen"], ["actividad", "Actividad"], ["ficha", "Ficha y contrato"], ["docs", "Documentos"], ["factura", "Factura mensual"]];
+  let body = "";
+  if (tab === "resumen") {
+    const proximas = DB.tareas.filter(t => t.fecha >= hoyISO() && (t.equipo_ids || []).includes(e.id) && t.estado !== "hecha")
+      .sort((a, b) => a.fecha.localeCompare(b.fecha)).slice(0, 5);
+    body = `
+    <div class="kpis" style="margin-bottom:16px">
+      <div class="kpi"><div class="lab">${ICON.clock} Hoy</div><div class="val">${horasEmpleadoRango(e.id, hoyISO(), hoyISO()).toLocaleString("es-ES")}<small>h</small></div><div class="sub">${fichajeAbierto(e.id) ? "jornada abierta" : "sin jornada abierta"}</div></div>
+      <div class="kpi"><div class="lab">${ICON.cal} Esta semana</div><div class="val">${horasEmpleadoRango(e.id, iniSemana, hoyISO()).toLocaleString("es-ES")}<small>h</small></div><div class="sub">contrato: ${e.contrato_horas} h/semana</div></div>
+      <div class="kpi"><div class="lab">${ICON.chart} Este mes</div><div class="val">${horasEmpleadoRango(e.id, mesISO() + "-01", hoyISO()).toLocaleString("es-ES")}<small>h</small></div><div class="sub">pausas descontadas</div></div>
+      <div class="kpi"><div class="lab">${ICON.broom} Servicios mes</div><div class="val">${DB.tareas.filter(t => t.estado === "hecha" && t.fecha.startsWith(mesISO()) && (t.equipo_ids || []).includes(e.id)).length}</div><div class="sub">completados</div></div>
+    </div>
+    <div class="grid" style="grid-template-columns:1.4fr 1fr">
+      <div class="card"><div class="card-head"><h3>Horas · últimos 6 meses</h3></div>
+        <div class="chart-box" style="height:180px"><canvas id="chart-trab"></canvas></div></div>
+      <div class="card"><div class="card-head"><h3>Próximos servicios</h3></div>
+        ${proximas.length ? `<div class="tl">${proximas.map(t => `
+          <div class="tl-item"><b>${t.tipo === "limpieza" ? "Limpieza" : "Servicio"} · ${esc(P(t.propiedad_id)?.nombre || "")}</b>
+          <span>${fmtCorto(t.fecha)} · ${(t.hora_inicio || "").slice(0, 5)}</span></div>`).join("")}</div>`
+        : `<p class="hint">Nada asignado próximamente.</p>`}</div>
+    </div>`;
+  }
+  if (tab === "actividad") {
+    const fichs = DB.fichajes.filter(f => f.empleado_id === e.id).sort((a, b) => b.entrada.localeCompare(a.entrada)).slice(0, 15);
+    const tars = DB.tareas.filter(t => (t.equipo_ids || []).includes(e.id)).sort((a, b) => b.fecha.localeCompare(a.fecha)).slice(0, 12);
+    body = `
+    <div class="grid" style="grid-template-columns:1.2fr 1fr">
+      <div class="card tight"><div class="card-head" style="padding:16px 18px 0"><h3>Fichajes recientes</h3></div>
+        ${fichs.length ? `<div class="tbl-wrap" style="border:none;box-shadow:none"><table class="tbl">
+          <thead><tr><th>Día</th><th>Entrada</th><th>Salida</th><th>GPS</th><th class="num">Horas</th></tr></thead>
+          <tbody>${fichs.map(f => `<tr><td><b>${fmtCorto(f.fecha)}</b></td><td>${fmtHora(f.entrada)}</td>
+            <td>${f.salida ? fmtHora(f.salida) : '<span class="chip blue"><i class="d"></i>abierta</span>'}</td>
+            <td>${f.lat ? `<a class="chip line" target="_blank" rel="noopener" href="https://maps.google.com/?q=${f.lat},${f.lng}">${ICON.pin} mapa</a>` : "—"}</td>
+            <td class="num"><b>${msAHoras(horasDeFichaje(f))} h</b></td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${ICON.clock}Aún sin fichajes.</div>`}</div>
+      <div class="card tight"><div class="card-head" style="padding:16px 18px 0"><h3>Servicios realizados</h3></div>
+        ${tars.length ? `<div class="tbl-wrap" style="border:none;box-shadow:none"><table class="tbl" style="min-width:0">
+          <thead><tr><th>Día</th><th>Propiedad</th><th>Estado</th></tr></thead>
+          <tbody>${tars.map(t => `<tr><td><b>${fmtCorto(t.fecha)}</b></td><td>${esc(P(t.propiedad_id)?.nombre || "")}</td>
+            <td>${t.estado === "hecha" ? '<span class="chip ok">Hecha</span>' : t.estado === "encurso" ? '<span class="chip blue"><i class="d"></i>En curso</span>' : '<span class="chip line">Pendiente</span>'}</td></tr>`).join("")}</tbody></table></div>`
+        : `<div class="empty">${ICON.broom}Sin servicios asignados todavía.</div>`}</div>
+    </div>`;
+  }
+  if (tab === "ficha") body = `
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="card"><div class="card-head"><h3>Datos laborales</h3>
+        <div class="right"><button class="btn sm outline" onclick="openEmpForm(${e.id})">${ICON.edit} Editar</button></div></div>
+        <div class="facts" style="grid-template-columns:1fr 1fr">
+          <div class="fact"><div class="k">Puesto</div><div class="v">${esc(e.rol_laboral)}</div></div>
+          <div class="fact"><div class="k">Relación</div><div class="v">${d.tipo_relacion === "autonomo" ? "Autónomo/a" : "Contrato laboral"}</div></div>
+          <div class="fact"><div class="k">Jornada</div><div class="v">${e.contrato_horas} h/semana</div></div>
+          <div class="fact"><div class="k">Fecha de alta</div><div class="v">${d.fecha_alta ? fmtCorto(d.fecha_alta) + " " + d.fecha_alta.slice(0, 4) : "—"}</div></div>
+          <div class="fact"><div class="k">Tarifa</div><div class="v">${+d.tarifa_hora ? eur(d.tarifa_hora) + " /h" : "—"}</div></div>
+          <div class="fact"><div class="k">Estado</div><div class="v">${e.activo ? "Activo" : "De baja"}</div></div>
+        </div>
+        ${d.notas ? `<p class="hint" style="margin-top:12px">${esc(d.notas)}</p>` : ""}</div>
+      <div class="card"><div class="card-head"><h3>Datos personales</h3><span class="sub">solo visibles para dirección</span></div>
+        <div class="facts" style="grid-template-columns:1fr 1fr">
+          <div class="fact"><div class="k">DNI / NIE</div><div class="v">${esc(d.dni || "—")}</div></div>
+          <div class="fact"><div class="k">Nº Seg. Social</div><div class="v">${esc(d.nass || "—")}</div></div>
+          <div class="fact"><div class="k">Teléfono</div><div class="v">${esc(e.telefono || "—")}</div></div>
+          <div class="fact"><div class="k">Email</div><div class="v">${esc(d.email || "—")}</div></div>
+          <div class="fact" style="grid-column:1/-1"><div class="k">Dirección</div><div class="v">${esc(d.direccion || "—")}</div></div>
+          <div class="fact" style="grid-column:1/-1"><div class="k">IBAN</div><div class="v">${esc(d.iban || "—")}</div></div>
+        </div>
+        ${e.codigo_acceso ? `<div style="margin-top:14px"><span class="hint">Código de acceso a la app (un solo uso): </span>
+          <button class="code-chip" onclick="copiar('${esc(e.codigo_acceso)}')">${esc(e.codigo_acceso)} ${ICON.copy}</button></div>` : `<p class="hint" style="margin-top:14px">${ICON.check} Ya tiene cuenta en la app.</p>`}
+      </div>
+    </div>`;
+  if (tab === "docs") body = `
+    <div class="card"><div class="card-head"><h3>Documentos del trabajador</h3><span class="sub">contrato firmado, DNI, PRL, certificados… solo los ve dirección</span>
+      <div class="right"><label class="file-btn">${ICON.plus} Subir documento<input type="file" onchange="subirDoc('empleados/${e.id}', this)"></label></div></div>
+      <div id="docs-list"><div class="lds"></div></div>
+    </div>`;
+  if (tab === "factura") {
+    const servicios = DB.tareas.filter(t => t.estado === "hecha" && t.fecha >= ini && t.fecha <= fin && (t.equipo_ids || []).includes(e.id)).length;
+    const dias = new Set(DB.fichajes.filter(f => f.empleado_id === e.id && f.fecha >= ini && f.fecha <= fin).map(f => f.fecha)).size;
+    const total = horasMes * (+d.tarifa_hora || 0);
+    body = `
+    <div class="card">
+      <div class="card-head"><h3>${d.tipo_relacion === "autonomo" ? "Factura mensual del autónomo" : "Recibo mensual de horas (para nómina)"}</h3>
+        <div class="right"><span class="month-nav">
+          <button onclick="STATE.trabMes='${addMeses(mes, -1)}';rerender()">${ICON.left}</button><b>${fmtMes(mes)}</b>
+          <button onclick="STATE.trabMes='${addMeses(mes, 1)}';rerender()">${ICON.right}</button></span></div></div>
+      <div class="facts" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+        <div class="fact"><div class="k">Días trabajados</div><div class="v">${dias}</div></div>
+        <div class="fact"><div class="k">Horas fichadas</div><div class="v">${horasMes.toLocaleString("es-ES")} h</div></div>
+        <div class="fact"><div class="k">Servicios hechos</div><div class="v">${servicios}</div></div>
+        <div class="fact"><div class="k">Importe (${+d.tarifa_hora ? eur(d.tarifa_hora) + "/h" : "sin tarifa"})</div><div class="v">${+d.tarifa_hora ? eur(total) : "—"}</div></div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn primary" onclick="openPaperTrabajador(${e.id},'${mes}')">${ICON.doc} Generar documento</button>
+        ${!+d.tarifa_hora ? `<span class="hint" style="align-self:center">Ponle tarifa €/h en «Editar ficha» para que calcule el importe.</span>` : ""}
+      </div>
+      <p class="form-note">${d.tipo_relacion === "autonomo"
+        ? "Se genera la factura del mes con sus datos fiscales (DNI, dirección, IBAN) y las horas fichadas: lista para que la firme/numere y os la entregue."
+        : "Se genera el recibo de horas del mes (días, horas netas con pausas descontadas e importe si hay tarifa), listo para la gestoría y la nómina."}</p>
+    </div>`;
+  }
+  return `
+  <button class="btn sm outline" style="margin-bottom:14px" data-go="trabajadores">${ICON.back} Trabajadores</button>
+  <div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+    ${ava(e, "mini-ava")}
+    <div style="flex:1;min-width:200px"><b style="font-size:18px">${esc(e.nombre)}</b>
+      <div class="hint">${esc(e.rol_laboral)} · ${d.tipo_relacion === "autonomo" ? "autónomo/a" : "contrato"} · ${e.contrato_horas} h/semana</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      ${chipEstado(e)}
+      ${e.activo ? "" : '<span class="chip gray">De baja</span>'}
+      <button class="btn sm outline" onclick="openEmpForm(${e.id})">${ICON.edit} Editar</button>
+      <button class="btn sm primary" onclick="STATE.trabTab='factura';rerender()">${ICON.invoice} Factura del mes</button>
+    </div>
+  </div>
+  <div class="tabs">${tabs.map(t => `<button class="tab ${tab === t[0] ? "on" : ""}" onclick="STATE.trabTab='${t[0]}';rerender()">${t[1]}</button>`).join("")}</div>
+  ${body}`;
+}
+function mountTrabajadorDetail() {
+  const e = S(STATE.trab); if (!e) return;
+  if ((STATE.trabTab || "resumen") === "resumen") {
+    const data = Array.from({ length: 6 }, (_, i) => {
+      const m = addMeses(mesISO(), i - 5), fin = addDias(addMeses(m, 1) + "-01", -1);
+      return [new Date(m + "-15T12:00").toLocaleDateString("es-ES", { month: "short" }), horasEmpleadoRango(e.id, m + "-01", fin)];
+    });
+    drawBars("chart-trab", data, { hi: 5 });
+  }
+  if (STATE.trabTab === "docs") cargarDocs(`empleados/${e.id}`);
+}
+
+/* factura / recibo mensual del trabajador */
+function paperFacturaTrabajador(e, mes) {
+  const d = ED(e.id), emp = DB.ajustes.empresa || {};
+  const ini = mes + "-01", fin = addDias(addMeses(mes, 1) + "-01", -1);
+  const horas = horasEmpleadoRango(e.id, ini, fin);
+  const dias = new Set(DB.fichajes.filter(f => f.empleado_id === e.id && f.fecha >= ini && f.fecha <= fin).map(f => f.fecha)).size;
+  const servicios = DB.tareas.filter(t => t.estado === "hecha" && t.fecha >= ini && t.fecha <= fin && (t.equipo_ids || []).includes(e.id)).length;
+  const tarifa = +d.tarifa_hora || 0, total = horas * tarifa;
+  if (d.tipo_relacion === "autonomo") {
+    return `<div class="paper">
+      <div class="paper-head">
+        <div class="t"><h2>Factura de servicios</h2><p>${fmtMes(mes)} · pendiente de numerar por el emisor</p></div>
+        <div class="meta"><b>${esc(e.nombre)}</b><br>${d.dni ? "NIF " + esc(d.dni) + "<br>" : ""}${d.direccion ? esc(d.direccion) + "<br>" : ""}${d.email ? esc(d.email) : ""}</div>
+      </div>
+      <p style="font-size:12.5px;margin-bottom:4px;color:var(--muted)">Facturar a</p>
+      <p style="font-weight:700;margin-bottom:14px">${esc(emp.nombre || "")}${emp.cif ? " · CIF " + esc(emp.cif) : ""}<br><span style="font-weight:400;font-size:12px;color:var(--muted)">${esc(emp.direccion || "")}</span></p>
+      <table><thead><tr><th>Concepto</th><th class="num">Importe</th></tr></thead><tbody>
+        <tr><td>Servicios de ${esc(e.rol_laboral.toLowerCase())} · ${fmtMes(mes)}<br>
+          <span style="color:var(--muted);font-size:11.5px">${dias} día${dias === 1 ? "" : "s"} · ${horas.toLocaleString("es-ES")} h fichadas × ${eur(tarifa)}/h · ${servicios} servicio${servicios === 1 ? "" : "s"} completado${servicios === 1 ? "" : "s"}</span></td>
+          <td class="num">${eur(total)}</td></tr>
+        <tr class="total"><td class="num" style="text-align:right">Total</td><td class="num">${eur(total)}</td></tr>
+      </tbody></table>
+      <p style="font-size:11.5px;color:var(--muted)">IVA e IRPF según el régimen fiscal del emisor. ${d.iban ? "Pago por transferencia al IBAN " + esc(d.iban) + "." : ""}
+      Detalle de horas verificable en el registro de jornada del portal.</p>
+      <div class="sign"><div>Generada por el Portal Hygge con los fichajes de ${fmtMes(mes)}</div></div>
+    </div>`;
+  }
+  return paperShell("Recibo mensual de horas", fmtMes(mes) + " · " + esc(e.nombre) + " (" + esc(e.rol_laboral) + ")",
+    `<table><thead><tr><th>Concepto</th><th class="num">Valor</th></tr></thead><tbody>
+      <tr><td>Días trabajados</td><td class="num">${dias}</td></tr>
+      <tr><td>Horas netas fichadas (pausas descontadas)</td><td class="num">${horas.toLocaleString("es-ES")} h</td></tr>
+      <tr><td>Servicios completados</td><td class="num">${servicios}</td></tr>
+      ${tarifa ? `<tr><td>Tarifa de referencia</td><td class="num">${eur(tarifa)} /h</td></tr>
+      <tr class="total"><td>Importe de referencia del mes</td><td class="num">${eur(total)}</td></tr>` : ""}
+    </tbody></table>
+    <p style="font-size:11.5px;color:var(--muted)">Trabajador/a: ${esc(e.nombre)}${d.dni ? " · DNI " + esc(d.dni) : ""}${d.nass ? " · NASS " + esc(d.nass) : ""}.
+    Documento de apoyo para nómina generado desde el registro de jornada (RD-ley 8/2019); no sustituye a la nómina oficial.</p>
+    <div class="sign" style="margin-top:40px"><div>Firma de la empresa</div><div>Firma del trabajador/a</div></div>`);
 }
 
 /* ============================================================
@@ -1054,6 +1272,8 @@ const VIEWS = {
   propiedades:  { t: "Propiedades",   c: "Cartera en gestión",                 r: viewProps,         m: () => resolverFotos() },
   propdetail:   { t: "Propiedad",     c: "Ficha completa",                     r: viewPropDetail,    m: () => mountPropDetail() },
   equipo:       { t: "Equipo en vivo",c: "Dónde está cada persona ahora",      r: viewEquipo,        m: () => initLiveMap() },
+  trabajadores: { t: "Trabajadores",  c: "Plantilla, contratos y facturas",    r: viewTrabajadores,  m: () => {} },
+  trabajadordetail: { t: "Trabajador",c: "Ficha completa",                     r: viewTrabajadorDetail, m: () => mountTrabajadorDetail() },
   plan:         { t: "Planificación", c: "Check-outs → servicios → check-ins", r: viewPlan,          m: () => {} },
   fichajes:     { t: "Fichajes",      c: "Registro de jornada del equipo",     r: viewFichajes,      m: () => {} },
   incidencias:  { t: "Incidencias",   c: "Averías y avisos del equipo",        r: viewIncidencias,   m: () => {} },

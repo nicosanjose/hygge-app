@@ -17,7 +17,7 @@ const rolDireccion = () => STATE.role === "direccion";
 const NAV = {
   direccion: [
     ["Operativa", [["dashboard", "Inicio", "home"], ["plan", "Planificación", "cal"], ["equipo", "Equipo en vivo", "pin"], ["fichajes", "Fichajes", "clock"], ["incidencias", "Incidencias", "alert"]]],
-    ["Negocio", [["propiedades", "Propiedades", "house"], ["propietarios", "Propietarios", "users"]]],
+    ["Negocio", [["propiedades", "Propiedades", "house"], ["trabajadores", "Trabajadores", "id"], ["propietarios", "Propietarios", "users"]]],
     ["Administración", [["informes", "Informes", "doc"], ["facturacion", "Facturación", "invoice"], ["ajustes", "Ajustes", "settings"]]],
   ],
   equipo: [
@@ -67,6 +67,7 @@ document.addEventListener("click", e => {
   const go1 = e.target.closest("[data-go]"); if (go1) { go(go1.dataset.go); return; }
   const pr = e.target.closest("[data-prop]"); if (pr) { STATE.prop = +pr.dataset.prop; STATE.propTab = "resumen"; STATE.propMes = null; go("propdetail"); return; }
   const prg = e.target.closest("[data-prop-go]"); if (prg) { STATE.prop = +prg.dataset.propGo; STATE.propTab = "resumen"; go("propdetail"); return; }
+  const tr = e.target.closest("[data-trab]"); if (tr) { STATE.trab = +tr.dataset.trab; STATE.trabTab = "resumen"; STATE.trabMes = null; go("trabajadordetail"); return; }
   const em = e.target.closest("[data-emp]"); if (em) { const emp = S(+em.dataset.emp); if (emp) openDrawer(drawerEmpleado(emp)); return; }
   const inc = e.target.closest("[data-inc]"); if (inc) { abrirIncidencia(+inc.dataset.inc); return; }
 });
@@ -453,25 +454,36 @@ async function guardarOwner(id) {
 }
 function openEmpForm(id) {
   const e = id ? S(id) : {};
+  const d = id ? ED(id) : {};
   const colores = ["#4f8a5c", "#4a7fa5", "#b5533c", "#c79c3d", "#84759f", "#555f50"];
   openModal(`
-    <div class="modal-head"><h3>${id ? "Editar ficha" : "Nueva persona del equipo"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-head"><h3>${id ? "Editar ficha" : "Nuevo trabajador"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
     <div class="modal-body"><div class="form-grid">
-      <div class="f-field full"><label>Nombre y apellido *</label><input id="ef-nombre" value="${esc(e.nombre || "")}"></div>
+      <div class="f-field full"><label>Nombre y apellidos *</label><input id="ef-nombre" value="${esc(e.nombre || "")}"></div>
       <div class="f-field"><label>Puesto</label>
         <select id="ef-rol">${["Limpieza", "Mantenimiento", "Piscinas y jardines", "Lavandería", "Coordinación"].map(r => `<option ${e.rol_laboral === r ? "selected" : ""}>${r}</option>`).join("")}</select></div>
       <div class="f-field"><label>Teléfono</label><input id="ef-tel" value="${esc(e.telefono || "")}"></div>
-      <div class="f-field"><label>Contrato h/semana</label><input id="ef-contrato" type="number" min="1" value="${e.contrato_horas || 40}"></div>
+      <div class="f-field"><label>Relación</label>
+        <select id="ef-relacion"><option value="contrato" ${d.tipo_relacion !== "autonomo" ? "selected" : ""}>Contrato laboral</option><option value="autonomo" ${d.tipo_relacion === "autonomo" ? "selected" : ""}>Autónomo/a</option></select></div>
+      <div class="f-field"><label>Jornada h/semana</label><input id="ef-contrato" type="number" min="1" value="${e.contrato_horas || 40}"></div>
+      <div class="f-field"><label>Fecha de alta</label><input id="ef-alta" type="date" value="${d.fecha_alta || ""}"></div>
+      <div class="f-field"><label>Tarifa €/hora</label><input id="ef-tarifa" type="number" step="0.01" min="0" value="${d.tarifa_hora ?? ""}" placeholder="para su factura/recibo"></div>
+      <div class="f-field"><label>DNI / NIE</label><input id="ef-dni" value="${esc(d.dni || "")}"></div>
+      <div class="f-field"><label>Nº Seguridad Social</label><input id="ef-nass" value="${esc(d.nass || "")}"></div>
+      <div class="f-field full"><label>Email</label><input id="ef-email" type="email" value="${esc(d.email || "")}"></div>
+      <div class="f-field full"><label>Dirección</label><input id="ef-direccion" value="${esc(d.direccion || "")}"></div>
+      <div class="f-field full"><label>IBAN</label><input id="ef-iban" value="${esc(d.iban || "")}" placeholder="para pagos/factura"></div>
       <div class="f-field"><label>Activo</label><select id="ef-activo"><option value="si" ${e.activo !== false ? "selected" : ""}>Sí</option><option value="no" ${e.activo === false ? "selected" : ""}>No</option></select></div>
-      <div class="f-field full"><label>Color en el mapa</label>
+      <div class="f-field"><label>Color en el mapa</label>
         <div class="tag-multi" id="ef-color">${colores.map(c => `<span class="tg ${(e.color || colores[0]) === c ? "on" : ""}" data-c="${c}" onclick="$$('#ef-color .tg').forEach(x=>x.classList.remove('on'));this.classList.add('on')" style="background:${c};border-color:${c};color:#fff">&nbsp;&nbsp;&nbsp;</span>`).join("")}</div></div>
+      <div class="f-field full"><label>Notas</label><textarea id="ef-notas">${esc(d.notas || "")}</textarea></div>
     </div>
-    ${!id ? `<p class="form-note">Al guardar se genera un <b>código de acceso de un solo uso</b>: dáselo para que cree su cuenta desde la pantalla de acceso (pestaña «Crear cuenta»).</p>` : ""}
+    ${!id ? `<p class="form-note">Al guardar se genera un <b>código de acceso de un solo uso</b>: dáselo para que cree su cuenta desde la pantalla de acceso (pestaña «Crear cuenta»). Los datos personales (DNI, IBAN…) solo los ve dirección.</p>` : ""}
     </div>
     <div class="modal-foot">
       <button class="btn outline" onclick="closeModal()">Cancelar</button>
       <button class="btn primary" onclick="guardarEmpleado(${id || "null"})">${ICON.check} Guardar</button>
-    </div>`);
+    </div>`, true);
 }
 async function guardarEmpleado(id) {
   const nombre = fval("ef-nombre");
@@ -480,7 +492,12 @@ async function guardarEmpleado(id) {
     nombre, rol_laboral: fval("ef-rol"), telefono: fval("ef-tel") || null,
     contrato_horas: fnum("ef-contrato") || 40, activo: fval("ef-activo") === "si",
     color: $("#ef-color .tg.on")?.dataset.c || "#4f8a5c",
-  }, id);
+  }, id, {
+    tipo_relacion: fval("ef-relacion"), fecha_alta: fval("ef-alta") || null,
+    tarifa_hora: fnum("ef-tarifa") || 0, dni: fval("ef-dni") || null, nass: fval("ef-nass") || null,
+    email: fval("ef-email") || null, direccion: fval("ef-direccion") || null,
+    iban: fval("ef-iban") || null, notas: fval("ef-notas") || null,
+  });
   if (r.error) return toast("No se pudo guardar", r.error, ICON.alert, "terra");
   closeModal();
   if (!id && r.emp?.codigo_acceso) {
@@ -772,28 +789,55 @@ async function activarDireccionUI(uid) {
 }
 
 /* ============================================================
-   DOCUMENTOS DE PROPIEDAD
+   DOCUMENTOS (propiedades y trabajadores)
    ============================================================ */
-async function cargarDocs(propId) {
+async function cargarDocs(prefix) {
   const box = $("#docs-list"); if (!box) return;
-  const docs = await dbListarDocumentos(propId);
-  if (!docs.length) { box.innerHTML = `<p class="hint">Sin documentos. Sube el contrato, la licencia o el inventario.</p>`; return; }
+  const docs = await dbListarDocumentos(prefix);
+  if (!docs.length) { box.innerHTML = `<p class="hint">Sin documentos todavía. Sube aquí el contrato y demás papeles: quedan guardados en la nube.</p>`; return; }
   box.innerHTML = docs.map(d => `
     <div class="doc-row">${ICON.doc}<b>${esc(d.name.replace(/^\d+_/, ""))}</b>
       <span class="sz">${d.metadata?.size ? Math.round(d.metadata.size / 1024) + " KB" : ""}</span>
-      <button class="btn xs outline" onclick="abrirDoc('${esc(`documentos/${propId}/${d.name}`)}')">${ICON.eye} Ver</button>
+      <button class="btn xs outline" onclick="abrirDoc('${esc(`${prefix}/${d.name}`)}')">${ICON.eye} Ver</button>
     </div>`).join("");
 }
 async function abrirDoc(path) {
   const url = await fotoUrl(path);
   if (url) window.open(url, "_blank", "noopener");
 }
-async function subirDoc(propId, input) {
+async function subirDoc(prefix, input) {
   const f = input.files[0]; if (!f) return;
-  const err = await dbSubirDocumento(propId, f);
+  const err = await dbSubirDocumento(prefix, f);
   if (err) return toast("No se pudo subir", err, ICON.alert, "terra");
   toast("Documento subido", f.name, ICON.check, "ok");
-  cargarDocs(propId);
+  cargarDocs(prefix);
+}
+
+/* ============================================================
+   TRABAJADORES: baja, eliminación y factura mensual
+   ============================================================ */
+async function bajaTrabajador(id) {
+  const e = S(id); if (!e) return;
+  const r = await dbGuardarEmpleado({ activo: !e.activo }, id);
+  if (r.error) return toast("No se pudo", r.error, ICON.alert, "terra");
+  toast(e.activo ? "Dado de baja" : "Reactivado", e.nombre + (e.activo ? " · conserva todo su historial" : ""), ICON.check, "ok");
+  rerender();
+}
+async function eliminarTrabajador(id) {
+  const e = S(id); if (!e) return;
+  const nFich = DB.fichajes.filter(f => f.empleado_id === id).length;
+  if (!confirm(`¿Eliminar DEFINITIVAMENTE a ${e.nombre}?\n\nSe borrará también todo su historial (${nFich} fichajes, posiciones y datos de contrato). Esta acción no se puede deshacer.\n\nSi solo deja de trabajar aquí, usa «Dar de baja»: conserva el historial.`)) return;
+  const err = await dbEliminarEmpleado(id);
+  if (err) return toast("No se pudo eliminar", err, ICON.alert, "terra");
+  toast("Trabajador eliminado", e.nombre, ICON.trash);
+  if (STATE.route === "trabajadordetail") STATE.route = "trabajadores";
+  rerender();
+}
+function openPaperTrabajador(id, mes) {
+  const e = S(id); if (!e) return;
+  const d = ED(id);
+  paperModal(paperFacturaTrabajador(e, mes),
+    (d.tipo_relacion === "autonomo" ? "Factura · " : "Recibo de horas · ") + e.nombre + " · " + fmtMes(mes));
 }
 
 /* ============================================================
