@@ -1,0 +1,820 @@
+/* ============================================================
+   APP · Portal Hygge (producto funcional sobre Supabase)
+   ============================================================ */
+
+const STATE = {
+  role: null, route: "dashboard",
+  prop: null, propTab: "resumen", propQ: "", propMes: null,
+  incFilter: "abiertas", factFilter: "todas", planDia: null, fichDia: null, repMes: null,
+};
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const rolDireccion = () => STATE.role === "direccion";
+
+/* ============================================================
+   NAVEGACIÓN
+   ============================================================ */
+const NAV = {
+  direccion: [
+    ["Operativa", [["dashboard", "Inicio", "home"], ["plan", "Planificación", "cal"], ["equipo", "Equipo en vivo", "pin"], ["fichajes", "Fichajes", "clock"], ["incidencias", "Incidencias", "alert"]]],
+    ["Negocio", [["propiedades", "Propiedades", "house"], ["propietarios", "Propietarios", "users"]]],
+    ["Administración", [["informes", "Informes", "doc"], ["facturacion", "Facturación", "invoice"], ["ajustes", "Ajustes", "settings"]]],
+  ],
+  equipo: [
+    ["Mi trabajo", [["midia", "Mi día", "sun"], ["mishoras", "Mis horas", "clock"], ["misincidencias", "Incidencias", "alert"]]],
+  ],
+};
+function renderNav() {
+  const incAb = DB.incidencias.filter(i => i.estado === "abierta").length;
+  $("#sb-nav").innerHTML = NAV[STATE.role].map(([label, items]) => `
+    <div class="sb-label">${label}</div>
+    ${items.map(([id, txt, ic]) => `
+      <button class="sb-item ${STATE.route === id ? "active" : ""}" data-go="${id}">
+        ${ICON[ic]} ${txt}
+        ${id === "incidencias" && incAb && rolDireccion() ? `<span class="pill">${incAb}</span>` : ""}
+      </button>`).join("")}`).join("");
+  const nombre = DB.profile?.nombre || "Usuario";
+  $("#sb-user").innerHTML = `
+    <span class="ava" style="background:${rolDireccion() ? "var(--gold)" : (miEmp()?.color || "#4f8a5c")}">${ini(nombre)}</span>
+    <div style="flex:1"><div class="n">${esc(nombre)}</div><div class="r">${rolDireccion() ? "Dirección" : "Equipo"}</div></div>`;
+  $("#user-btn").textContent = ini(nombre);
+  $("#user-drop-nombre").textContent = nombre;
+  $("#user-drop-rol").textContent = rolDireccion() ? "Dirección · acceso total" : "Equipo · " + (miEmp()?.rol_laboral || "");
+  $("#menu-ajustes").style.display = rolDireccion() ? "" : "none";
+}
+function go(route) {
+  STATE.route = route;
+  document.body.classList.remove("nav-open");
+  closeDrawer();
+  rerender();
+  window.scrollTo({ top: 0 });
+}
+function rerender(keepFocus) {
+  if (!STATE.role) return;
+  const v = VIEWS[STATE.route] || VIEWS[rolDireccion() ? "dashboard" : "midia"];
+  let selStart = 0, hadFocus = false;
+  if (keepFocus && document.activeElement?.tagName === "INPUT" && document.activeElement.closest("#content")) {
+    hadFocus = true; selStart = document.activeElement.selectionStart;
+  }
+  $("#tb-title").textContent = v.t;
+  $("#tb-crumb").textContent = v.c;
+  $("#content").innerHTML = `<div class="section">${v.r()}</div>`;
+  v.m && v.m();
+  renderNav();
+  if (hadFocus) { const inp = $("#content input.input"); if (inp) { inp.focus(); try { inp.setSelectionRange(selStart, selStart); } catch {} } }
+}
+document.addEventListener("click", e => {
+  const go1 = e.target.closest("[data-go]"); if (go1) { go(go1.dataset.go); return; }
+  const pr = e.target.closest("[data-prop]"); if (pr) { STATE.prop = +pr.dataset.prop; STATE.propTab = "resumen"; STATE.propMes = null; go("propdetail"); return; }
+  const prg = e.target.closest("[data-prop-go]"); if (prg) { STATE.prop = +prg.dataset.propGo; STATE.propTab = "resumen"; go("propdetail"); return; }
+  const em = e.target.closest("[data-emp]"); if (em) { const emp = S(+em.dataset.emp); if (emp) openDrawer(drawerEmpleado(emp)); return; }
+  const inc = e.target.closest("[data-inc]"); if (inc) { abrirIncidencia(+inc.dataset.inc); return; }
+});
+
+/* ============================================================
+   ARRANQUE + AUTH
+   ============================================================ */
+function authTab(t) {
+  $("#tab-login").classList.toggle("on", t === "login");
+  $("#tab-signup").classList.toggle("on", t === "signup");
+  $("#form-login").style.display = t === "login" ? "" : "none";
+  $("#form-signup").style.display = t === "signup" ? "" : "none";
+  authErr("");
+}
+function authErr(msg, info) {
+  const el = $("#auth-err");
+  el.style.display = msg ? "" : "none";
+  el.textContent = msg || "";
+  el.style.background = info ? "rgba(79,138,92,.16)" : "";
+  el.style.borderColor = info ? "rgba(79,138,92,.45)" : "";
+  el.style.color = info ? "#b8d8bf" : "";
+}
+async function doLogin(ev) {
+  ev.preventDefault();
+  const btn = $("#btn-login"); btn.disabled = true; btn.textContent = "Entrando…";
+  const err = await dbLogin($("#lg-email").value.trim(), $("#lg-pass").value);
+  btn.disabled = false; btn.textContent = "Entrar";
+  if (err) return authErr(err);
+  await bootSesion();
+}
+async function doSignup(ev) {
+  ev.preventDefault();
+  const btn = $("#btn-signup"); btn.disabled = true; btn.textContent = "Creando cuenta…";
+  const r = await dbSignup($("#su-nombre").value.trim(), $("#su-email").value.trim(), $("#su-pass").value);
+  btn.disabled = false; btn.textContent = "Crear cuenta";
+  if (r.error) return authErr(r.error);
+  if (r.needsConfirm) return authErr("Cuenta creada. Revisa tu correo para confirmarla y después entra con tu email y contraseña.", true);
+  sessionStorage.setItem("hygge_codigo", $("#su-codigo").value.trim());
+  await bootSesion();
+}
+async function bootSesion() {
+  const perfil = await dbCargarPerfil();
+  if (!perfil) return;
+  if (!perfil.rol) {
+    const codigo = sessionStorage.getItem("hygge_codigo") || $("#su-codigo")?.value.trim() || null;
+    const r = await dbReclamar(codigo);
+    sessionStorage.removeItem("hygge_codigo");
+    if (r.error) {
+      $("#login").classList.add("hidden");
+      $("#pendiente").style.display = "flex";
+      $("#pendiente-txt").textContent = r.error;
+      return;
+    }
+    perfil.rol = r.rol;
+    await dbCargarPerfil();
+  }
+  await entrar();
+}
+async function entrar() {
+  STATE.role = DB.profile.rol;
+  STATE.route = rolDireccion() ? "dashboard" : "midia";
+  if (loginAnim) cancelAnimationFrame(loginAnim);
+  $("#login").classList.add("hidden");
+  $("#pendiente").style.display = "none";
+  document.body.insertAdjacentHTML("beforeend", `<div class="cargando-app" id="cargando"><div class="lds"></div>Cargando tus datos…</div>`);
+  await dbCargarTodo();
+  $("#cargando")?.remove();
+  $("#app").classList.add("visible");
+  dbRealtime();
+  startClock();
+  rerender();
+  if (!rolDireccion()) dbPingPosicion();
+}
+
+/* ============================================================
+   RELOJ REAL
+   ============================================================ */
+function startClock() {
+  const tick = () => {
+    const el = $("#tb-clock"); if (!el) return;
+    const d = new Date();
+    el.innerHTML = d.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "short" }) +
+      " · <b>" + d.toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) + "</b>";
+  };
+  tick(); clearInterval(STATE._clockInt); STATE._clockInt = setInterval(tick, 20000);
+}
+function startEmpTimer() {
+  const upd = () => {
+    const el = $("#emp-timer"); if (!el) return;
+    const me = miEmp(); const f = me && fichajeAbierto(me.id);
+    if (!f) { el.textContent = "—"; return; }
+    const ms = horasDeFichaje(f);
+    el.textContent = Math.floor(ms / 36e5) + " h " + String(Math.floor(ms % 36e5 / 6e4)).padStart(2, "0") + " min";
+  };
+  upd(); clearInterval(STATE._empInt); STATE._empInt = setInterval(upd, 30000);
+}
+
+/* ============================================================
+   LOGIN CANVAS · "la isla encendida"
+   ============================================================ */
+const MALLORCA = [
+  [7,60],[10,52],[15,45],[22,38],[30,30],[37,24],[44,17],[50,11],[55,7],[58.5,10],[53,17],[50,21],
+  [53,23],[57,22],[60,26],[57,32],[53,37],[56,41],[62,42],[69,41],[76,38],[83,36],[90,38],[93,42],
+  [91,48],[86,55],[80,62],[72,70],[63,78],[55,85],[47,84],[41,78],[35,72],[29,66],[24,68],[18,66],[12,65],[7,60],
+];
+const PROPS_LIGHT = [[86,40],[82,37],[88,45],[84,49],[80,44],[78,40],[76,47],[83,42],[71,44],[74,52],[68,48],[87,52]];
+function inPoly(x, y, poly) {
+  let ins = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) ins = !ins;
+  }
+  return ins;
+}
+let loginAnim = null;
+function startLogin() {
+  const cv = $("#login-canvas"), ctx = cv.getContext("2d");
+  let W, H, dots = [], bokeh = [], luces = [], mouse = { x: -999, y: -999 };
+  const build = () => {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = cv.clientWidth; H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const s = Math.min(W * (W > 760 ? .52 : .94) / 100, H * .84 / 100);
+    const ox = W > 760 ? W * .44 : W * .03 + (W - s * 100) / 2, oy = (H - s * 78) / 2 - s * 6;
+    dots = [];
+    const step = Math.max(7, s * 1.55);
+    for (let gx = 0; gx <= 100; gx += step / s) for (let gy = 0; gy <= 90; gy += step / s) {
+      if (inPoly(gx, gy, MALLORCA)) dots.push({ x: ox + gx * s, y: oy + gy * s, r: Math.max(1.1, s * .42), tw: Math.random() * 6.28 });
+    }
+    luces = PROPS_LIGHT.map(([x, y]) => ({ x: ox + x * s, y: oy + y * s, ph: Math.random() * 6.28 }));
+    bokeh = Array.from({ length: 22 }, () => ({
+      x: Math.random() * W, y: Math.random() * H, r: 2 + Math.random() * 5,
+      vx: (Math.random() - .5) * .12, vy: -.06 - Math.random() * .12, a: .04 + Math.random() * .1,
+    }));
+  };
+  build();
+  window.addEventListener("resize", build);
+  cv.parentElement.addEventListener("pointermove", e => { const r = cv.getBoundingClientRect(); mouse.x = e.clientX - r.left; mouse.y = e.clientY - r.top; });
+  cv.parentElement.addEventListener("pointerleave", () => { mouse.x = -999; mouse.y = -999; });
+  let t = 0;
+  const frame = () => {
+    t += .016;
+    ctx.clearRect(0, 0, W, H);
+    const bg = ctx.createRadialGradient(W * .7, H * .45, 60, W * .5, H * .5, Math.max(W, H) * .75);
+    bg.addColorStop(0, "#262b22"); bg.addColorStop(1, "#1c201a");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    bokeh.forEach(b => {
+      b.x += b.vx; b.y += b.vy;
+      if (b.y < -10) { b.y = H + 10; b.x = Math.random() * W; }
+      const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r * 3);
+      g.addColorStop(0, `rgba(219,177,101,${b.a})`); g.addColorStop(1, "rgba(219,177,101,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 3, 0, 6.28); ctx.fill();
+    });
+    dots.forEach(d => {
+      const dist = Math.hypot(d.x - mouse.x, d.y - mouse.y);
+      const warm = Math.max(0, 1 - dist / 190);
+      const tw = .5 + .5 * Math.sin(t * 1.2 + d.tw);
+      const a = .16 + tw * .1 + warm * .55;
+      ctx.fillStyle = warm > .04
+        ? `rgba(${140 + warm * 100},${125 + warm * 45},${88 + warm * 8},${a})`
+        : `rgba(126,136,118,${a})`;
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r + warm * 1.2, 0, 6.28); ctx.fill();
+    });
+    luces.forEach(l => {
+      const p = .62 + .38 * Math.sin(t * 1.6 + l.ph);
+      const g = ctx.createRadialGradient(l.x, l.y, 0, l.x, l.y, 14 + p * 8);
+      g.addColorStop(0, `rgba(233,190,102,${.85 * p})`); g.addColorStop(.35, `rgba(214,155,61,${.35 * p})`); g.addColorStop(1, "rgba(214,155,61,0)");
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(l.x, l.y, 14 + p * 8, 0, 6.28); ctx.fill();
+      ctx.fillStyle = `rgba(255,232,178,${.75 + .25 * p})`; ctx.beginPath(); ctx.arc(l.x, l.y, 2.1, 0, 6.28); ctx.fill();
+    });
+    loginAnim = requestAnimationFrame(frame);
+  };
+  frame();
+}
+
+/* ============================================================
+   UI GENÉRICA: drops, drawer, modal, toasts, glow
+   ============================================================ */
+function toggleDrop(id) {
+  const el = $(id); const was = el.classList.contains("open");
+  $$(".tb-drop").forEach(d => d.classList.remove("open"));
+  if (!was) el.classList.add("open");
+}
+document.addEventListener("click", e => { if (!e.target.closest(".tb-menu")) $$(".tb-drop").forEach(d => d.classList.remove("open")); });
+function openDrawer(html) { $("#drawer").innerHTML = html; $("#drawer").classList.add("open"); $("#drawer-veil").classList.add("open"); }
+function closeDrawer() { $("#drawer").classList.remove("open"); $("#drawer-veil").classList.remove("open"); }
+function openModal(html, wide) {
+  $("#modal-root").innerHTML = `<div class="veil" onclick="closeModal()"></div><div class="modal ${wide ? "wide" : ""}">${html}</div>`;
+  $("#modal-root").classList.add("open");
+}
+function closeModal() { $("#modal-root").classList.remove("open"); $("#modal-root").innerHTML = ""; document.body.classList.remove("printing"); }
+function toast(b, t, icon = ICON.check, cls = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + cls;
+  el.innerHTML = `${icon}<div><b>${b}</b>${t ? `<span>${t}</span>` : ""}</div>`;
+  $("#toasts").appendChild(el);
+  setTimeout(() => { el.classList.add("bye"); setTimeout(() => el.remove(), 350); }, 4600);
+}
+function copiar(txt) { navigator.clipboard?.writeText(txt); toast("Copiado", txt, ICON.copy, "ok"); }
+(function () {
+  const glow = document.getElementById("cursor-glow");
+  let gx = -600, gy = -600, tx = gx, ty = gy;
+  document.addEventListener("pointermove", e => { tx = e.clientX; ty = e.clientY; document.body.classList.add("glow-on"); });
+  (function loop() { gx += (tx - gx) * .09; gy += (ty - gy) * .09; glow.style.left = gx + "px"; glow.style.top = gy + "px"; requestAnimationFrame(loop); })();
+})();
+
+/* búsqueda */
+function searchInput(v) {
+  const box = $("#tb-results"); const q = v.trim().toLowerCase();
+  if (!q) { box.classList.remove("open"); return; }
+  const props = DB.props.filter(p => (p.nombre + " " + (p.zona || "")).toLowerCase().includes(q)).slice(0, 4)
+    .map(p => `<button class="tb-hit" data-prop="${p.id}">${ICON.house} ${esc(p.nombre)} <span class="k">${esc(p.zona || "")}</span></button>`);
+  const emps = rolDireccion() ? DB.emp.filter(s => (s.nombre + " " + s.rol_laboral).toLowerCase().includes(q)).slice(0, 4)
+    .map(s => `<button class="tb-hit" data-emp="${s.id}">${ICON.users} ${esc(s.nombre)} <span class="k">${esc(s.rol_laboral)}</span></button>`) : [];
+  box.innerHTML = [...props, ...emps].join("") || `<div class="tb-hit">Sin resultados</div>`;
+  box.classList.add("open");
+}
+document.addEventListener("click", e => { if (!e.target.closest(".tb-search")) $("#tb-results")?.classList.remove("open"); });
+
+/* fotos con URL firmada */
+async function resolverFotos() {
+  for (const img of $$("img[data-foto]")) {
+    const url = await fotoUrl(img.dataset.foto);
+    if (url) { img.src = url; img.removeAttribute("data-foto"); }
+  }
+}
+
+/* ============================================================
+   PAPELES + PRINT + CSV
+   ============================================================ */
+function paperModal(paperHTML, titulo) {
+  openModal(`
+    <div class="modal-head"><h3>${titulo}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body" style="background:#eceada;border-radius:0 0 20px 20px">
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-bottom:14px">
+        <button class="btn sm outline" style="background:#fff" onclick="printPaper()">${ICON.print} Descargar PDF</button>
+      </div>
+      ${paperHTML}
+    </div>`, true);
+}
+function printPaper() { document.body.classList.add("printing"); setTimeout(() => { window.print(); document.body.classList.remove("printing"); }, 60); }
+const openPaperHoras = mes => paperModal(paperHoras(mes), "Horas por empleado · " + fmtMes(mes));
+const openPaperOcupacion = mes => paperModal(paperOcupacion(mes), "Ocupación · " + fmtMes(mes));
+const openPaperLiquidaciones = mes => paperModal(paperLiquidaciones(mes), "Liquidaciones · " + fmtMes(mes));
+const openPaperFichajes = fecha => paperModal(paperFichajesDia(fecha), "Registro de jornada · " + fmtCorto(fecha));
+const openFacturaPaper = id => { const f = DB.facturas.find(x => x.id === id); if (f) paperModal(paperFactura(f), f.numero ? "Factura " + f.numero : "Borrador"); };
+const openPaperLiqOwner = (oid, mes) => { const o = O(oid); if (o) paperModal(paperLiqOwner(o, mes), "Liquidación · " + esc(o.nombre)); };
+function exportFichajesCSV(fecha) {
+  const rows = [["Empleado", "Puesto", "Fecha", "Entrada", "Salida", "Pausas", "Horas", "Lat", "Lng"]];
+  DB.fichajes.filter(f => f.fecha === fecha).forEach(f => {
+    const e = S(f.empleado_id) || {};
+    const ps = DB.pausas.filter(p => p.fichaje_id === f.id).map(p => fmtHora(p.inicio) + "-" + (p.fin ? fmtHora(p.fin) : "")).join(" ");
+    rows.push([e.nombre || "?", e.rol_laboral || "", f.fecha, fmtHora(f.entrada), f.salida ? fmtHora(f.salida) : "", ps, msAHoras(horasDeFichaje(f)), f.lat || "", f.lng || ""]);
+  });
+  const csv = rows.map(r => r.map(c => `"${c}"`).join(";")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `fichajes-${fecha}.csv`; a.click();
+  toast("CSV exportado", `fichajes-${fecha}.csv`, ICON.down, "ok");
+}
+
+/* ============================================================
+   FORMULARIOS · PROPIEDADES / RESERVAS / PROPIETARIOS / EQUIPO
+   ============================================================ */
+function fval(id) { return $("#" + id)?.value.trim() ?? ""; }
+function fnum(id) { const v = fval(id); return v === "" ? null : +v; }
+
+function openPropForm(id) {
+  const p = id ? P(id) : {};
+  const zonas = ["Artà", "Capdepera", "Cala Ratjada", "Canyamel", "Cala Mesquida", "Colònia de Sant Pere", "Betlem", "Son Servera", "Cala Millor", "Font de sa Cala"];
+  openModal(`
+    <div class="modal-head"><h3>${id ? "Editar propiedad" : "Nueva propiedad"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Nombre *</label><input id="pf-nombre" value="${esc(p.nombre || "")}" placeholder="Villa Es Molí"></div>
+      <div class="f-field"><label>Zona</label><input id="pf-zona" list="zonas-dl" value="${esc(p.zona || "")}"><datalist id="zonas-dl">${zonas.map(z => `<option>${z}</option>`).join("")}</datalist></div>
+      <div class="f-field"><label>Tipo</label><input id="pf-tipo" value="${esc(p.tipo || "")}" placeholder="Villa con piscina"></div>
+      <div class="f-field full"><label>Dirección</label><input id="pf-direccion" value="${esc(p.direccion || "")}"></div>
+      <div class="f-field"><label>Propietario</label>
+        <select id="pf-owner"><option value="">— Sin asignar —</option>
+        ${DB.owners.map(o => `<option value="${o.id}" ${p.propietario_id === o.id ? "selected" : ""}>${esc(o.nombre)}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Licencia turística</label><input id="pf-licencia" value="${esc(p.licencia || "")}" placeholder="ETV/1234"></div>
+      <div class="f-field"><label>Habitaciones</label><input id="pf-habs" type="number" min="0" value="${p.habs ?? ""}"></div>
+      <div class="f-field"><label>Baños</label><input id="pf-banos" type="number" min="0" value="${p.banos ?? ""}"></div>
+      <div class="f-field"><label>Plazas</label><input id="pf-plazas" type="number" min="0" value="${p.plazas ?? ""}"></div>
+      <div class="f-field"><label>Llaves (consigna)</label><input id="pf-llave" value="${esc(p.llave || "")}" placeholder="L-01"></div>
+      <div class="f-field"><label>Tarifa gestión €/mes</label><input id="pf-tgestion" type="number" step="0.01" min="0" value="${p.tarifa_gestion ?? ""}"></div>
+      <div class="f-field"><label>Tarifa por limpieza €</label><input id="pf-tlimpieza" type="number" step="0.01" min="0" value="${p.tarifa_limpieza ?? ""}"></div>
+      <div class="f-field full"><label>Canales</label>
+        <div class="tag-multi" id="pf-canales">${["Airbnb", "Booking", "Vrbo", "Directa"].map(c => `<span class="tg ${(p.canales || []).includes(c) ? "on" : ""}" onclick="this.classList.toggle('on')">${c}</span>`).join("")}</div></div>
+      <div class="f-field"><label>Piscina</label><select id="pf-piscina"><option value="no" ${!p.piscina ? "selected" : ""}>No</option><option value="si" ${p.piscina ? "selected" : ""}>Sí</option></select></div>
+      <div class="f-field"><label>Activa</label><select id="pf-activa"><option value="si" ${p.activa !== false ? "selected" : ""}>Sí</option><option value="no" ${p.activa === false ? "selected" : ""}>No</option></select></div>
+      <div class="f-field full"><label>Foto de portada</label>
+        <div class="field-file"><label class="file-btn">${ICON.camera} Elegir imagen<input type="file" id="pf-foto" accept="image/*"></label>
+        <span class="hint">${p.foto_path ? "Ya tiene foto: se sustituirá si eliges otra." : "Opcional."}</span></div></div>
+      <div class="f-field full"><label>Notas</label><textarea id="pf-notas">${esc(p.notas || "")}</textarea></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" id="pf-save" onclick="guardarProp(${id || "null"})">${ICON.check} Guardar</button>
+    </div>`, true);
+}
+async function guardarProp(id) {
+  const nombre = fval("pf-nombre");
+  if (!nombre) return toast("Falta el nombre", "Ponle nombre a la propiedad.", ICON.alert, "terra");
+  const btn = $("#pf-save"); btn.disabled = true; btn.textContent = "Guardando…";
+  const payload = {
+    nombre, zona: fval("pf-zona") || null, tipo: fval("pf-tipo") || null, direccion: fval("pf-direccion") || null,
+    propietario_id: fval("pf-owner") ? +fval("pf-owner") : null, licencia: fval("pf-licencia") || null,
+    habs: fnum("pf-habs") || 0, banos: fnum("pf-banos") || 0, plazas: fnum("pf-plazas") || 0,
+    llave: fval("pf-llave") || null, tarifa_gestion: fnum("pf-tgestion") || 0, tarifa_limpieza: fnum("pf-tlimpieza") || 0,
+    canales: $$("#pf-canales .tg.on").map(t => t.textContent), piscina: fval("pf-piscina") === "si",
+    activa: fval("pf-activa") === "si", notas: fval("pf-notas") || null,
+  };
+  const err = await dbGuardarProp(payload, id, $("#pf-foto")?.files[0]);
+  if (err) { btn.disabled = false; btn.textContent = "Guardar"; return toast("No se pudo guardar", err, ICON.alert, "terra"); }
+  closeModal(); toast(id ? "Propiedad actualizada" : "Propiedad creada", nombre, ICON.check, "ok"); rerender();
+}
+function openReservaForm(propId, fecha) {
+  const p = P(propId); if (!p) return;
+  openModal(`
+    <div class="modal-head"><h3>Nueva reserva · ${esc(p.nombre)}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field"><label>Entrada *</label><input id="rf-entrada" type="date" value="${fecha || hoyISO()}"></div>
+      <div class="f-field"><label>Salida *</label><input id="rf-salida" type="date" value="${addDias(fecha || hoyISO(), 7)}"></div>
+      <div class="f-field"><label>Hora entrada</label><input id="rf-hin" type="time" value="16:00"></div>
+      <div class="f-field"><label>Hora salida</label><input id="rf-hout" type="time" value="10:00"></div>
+      <div class="f-field"><label>Canal</label><select id="rf-canal">${["Airbnb", "Booking", "Vrbo", "Directa"].map(c => `<option>${c}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Plazas</label><input id="rf-plazas" type="number" min="1" value="${p.plazas || ""}"></div>
+      <div class="f-field"><label>Huésped</label><input id="rf-huesped" placeholder="Opcional"></div>
+      <div class="f-field"><label>Importe € (para liquidaciones)</label><input id="rf-importe" type="number" step="0.01" min="0" placeholder="Opcional"></div>
+      <div class="f-field full"><label>Tipo</label><select id="rf-estado"><option value="confirmada">Reserva confirmada</option><option value="bloqueo">Bloqueo (propietario / obras)</option></select></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarReserva(${propId})">${ICON.check} Guardar reserva</button>
+    </div>`);
+}
+async function guardarReserva(propId) {
+  const entrada = fval("rf-entrada"), salida = fval("rf-salida");
+  if (!entrada || !salida || salida <= entrada) return toast("Fechas no válidas", "La salida debe ser posterior a la entrada.", ICON.alert, "terra");
+  const err = await dbCrearReserva({
+    propiedad_id: propId, entrada, salida, hora_entrada: fval("rf-hin") || null, hora_salida: fval("rf-hout") || null,
+    canal: fval("rf-canal"), plazas: fnum("rf-plazas"), huesped: fval("rf-huesped") || null,
+    importe: fnum("rf-importe"), estado: fval("rf-estado"),
+  });
+  if (err) return toast("No se pudo crear", err, ICON.alert, "terra");
+  closeModal(); toast("Reserva guardada", fmtCorto(entrada) + " → " + fmtCorto(salida), ICON.check, "ok");
+  STATE.propTab = "calendario"; rerender();
+}
+async function delReserva(id) {
+  if (!confirm("¿Eliminar esta reserva?")) return;
+  const err = await dbBorrarReserva(id);
+  if (err) return toast("No se pudo eliminar", err, ICON.alert, "terra");
+  toast("Reserva eliminada", "", ICON.trash); rerender();
+}
+function openOwnerForm(id) {
+  const o = id ? O(id) : {};
+  openModal(`
+    <div class="modal-head"><h3>${id ? "Editar propietario" : "Nuevo propietario"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Nombre *</label><input id="of-nombre" value="${esc(o.nombre || "")}"></div>
+      <div class="f-field"><label>País</label><input id="of-pais" value="${esc(o.pais || "")}"></div>
+      <div class="f-field"><label>Idioma</label><select id="of-idioma">${["es", "en", "de", "da", "sv"].map(l => `<option ${o.idioma === l ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Email</label><input id="of-email" type="email" value="${esc(o.email || "")}"></div>
+      <div class="f-field"><label>Teléfono</label><input id="of-tel" value="${esc(o.telefono || "")}"></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarOwner(${id || "null"})">${ICON.check} Guardar</button>
+    </div>`);
+}
+async function guardarOwner(id) {
+  const nombre = fval("of-nombre");
+  if (!nombre) return toast("Falta el nombre", "", ICON.alert, "terra");
+  const err = await dbGuardarOwner({ nombre, pais: fval("of-pais") || null, idioma: fval("of-idioma"), email: fval("of-email") || null, telefono: fval("of-tel") || null }, id);
+  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  closeModal(); toast(id ? "Propietario actualizado" : "Propietario creado", nombre, ICON.check, "ok"); rerender();
+}
+function openEmpForm(id) {
+  const e = id ? S(id) : {};
+  const colores = ["#4f8a5c", "#4a7fa5", "#b5533c", "#c79c3d", "#84759f", "#555f50"];
+  openModal(`
+    <div class="modal-head"><h3>${id ? "Editar ficha" : "Nueva persona del equipo"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Nombre y apellido *</label><input id="ef-nombre" value="${esc(e.nombre || "")}"></div>
+      <div class="f-field"><label>Puesto</label>
+        <select id="ef-rol">${["Limpieza", "Mantenimiento", "Piscinas y jardines", "Lavandería", "Coordinación"].map(r => `<option ${e.rol_laboral === r ? "selected" : ""}>${r}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Teléfono</label><input id="ef-tel" value="${esc(e.telefono || "")}"></div>
+      <div class="f-field"><label>Contrato h/semana</label><input id="ef-contrato" type="number" min="1" value="${e.contrato_horas || 40}"></div>
+      <div class="f-field"><label>Activo</label><select id="ef-activo"><option value="si" ${e.activo !== false ? "selected" : ""}>Sí</option><option value="no" ${e.activo === false ? "selected" : ""}>No</option></select></div>
+      <div class="f-field full"><label>Color en el mapa</label>
+        <div class="tag-multi" id="ef-color">${colores.map(c => `<span class="tg ${(e.color || colores[0]) === c ? "on" : ""}" data-c="${c}" onclick="$$('#ef-color .tg').forEach(x=>x.classList.remove('on'));this.classList.add('on')" style="background:${c};border-color:${c};color:#fff">&nbsp;&nbsp;&nbsp;</span>`).join("")}</div></div>
+    </div>
+    ${!id ? `<p class="form-note">Al guardar se genera un <b>código de acceso de un solo uso</b>: dáselo para que cree su cuenta desde la pantalla de acceso (pestaña «Crear cuenta»).</p>` : ""}
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarEmpleado(${id || "null"})">${ICON.check} Guardar</button>
+    </div>`);
+}
+async function guardarEmpleado(id) {
+  const nombre = fval("ef-nombre");
+  if (!nombre) return toast("Falta el nombre", "", ICON.alert, "terra");
+  const r = await dbGuardarEmpleado({
+    nombre, rol_laboral: fval("ef-rol"), telefono: fval("ef-tel") || null,
+    contrato_horas: fnum("ef-contrato") || 40, activo: fval("ef-activo") === "si",
+    color: $("#ef-color .tg.on")?.dataset.c || "#4f8a5c",
+  }, id);
+  if (r.error) return toast("No se pudo guardar", r.error, ICON.alert, "terra");
+  closeModal();
+  if (!id && r.emp?.codigo_acceso) {
+    openModal(`
+      <div class="modal-head"><h3>${esc(nombre)} ya está en el equipo</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+      <div class="modal-body" style="text-align:center;padding-bottom:26px">
+        <p style="font-size:13.5px;margin-bottom:14px">Su código para crear la cuenta (un solo uso):</p>
+        <button class="code-chip" style="font-size:19px;padding:10px 18px" onclick="copiar('${esc(r.emp.codigo_acceso)}')">${esc(r.emp.codigo_acceso)} ${ICON.copy}</button>
+        <p class="form-note">También lo verás en su ficha (Equipo → su nombre).</p>
+      </div>`);
+  } else toast("Ficha guardada", nombre, ICON.check, "ok");
+  rerender();
+}
+
+/* ============================================================
+   TAREAS (planificación + flujo empleado)
+   ============================================================ */
+function openTareaForm(fecha, propId, tareaId) {
+  const t = tareaId ? DB.tareas.find(x => x.id === tareaId) : {};
+  openModal(`
+    <div class="modal-head"><h3>${tareaId ? "Editar servicio" : "Nuevo servicio"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Propiedad *</label>
+        <select id="tf-prop">${DB.props.filter(p => p.activa).map(p => `<option value="${p.id}" ${(t.propiedad_id || propId) === p.id ? "selected" : ""}>${esc(p.nombre)}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Fecha</label><input id="tf-fecha" type="date" value="${t.fecha || fecha || hoyISO()}"></div>
+      <div class="f-field"><label>Tipo</label>
+        <select id="tf-tipo">${[["limpieza", "Limpieza"], ["mantenimiento", "Mantenimiento"], ["piscina", "Piscina / jardín"], ["otro", "Otro"]].map(x => `<option value="${x[0]}" ${t.tipo === x[0] ? "selected" : ""}>${x[1]}</option>`).join("")}</select></div>
+      <div class="f-field"><label>Hora inicio</label><input id="tf-hin" type="time" value="${(t.hora_inicio || "10:00").slice(0, 5)}"></div>
+      <div class="f-field"><label>Hora fin (prevista)</label><input id="tf-hfin" type="time" value="${(t.hora_fin || "12:00").slice(0, 5)}"></div>
+      <div class="f-field full"><label>Equipo asignado</label>
+        <div class="tag-multi" id="tf-equipo">${DB.emp.filter(e => e.activo).map(e => `<span class="tg ${(t.equipo_ids || []).includes(e.id) ? "on" : ""}" data-id="${e.id}" onclick="this.classList.toggle('on')">${esc(e.nombre.split(" ")[0])}</span>`).join("") || '<span class="hint">Da de alta al equipo primero.</span>'}</div></div>
+      <div class="f-field full"><label>Nota</label><input id="tf-desc" value="${esc(t.descripcion || "")}" placeholder="Ej. check-out → check-in 16:00"></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="guardarTarea(${tareaId || "null"})">${ICON.check} Guardar</button>
+    </div>`);
+}
+async function guardarTarea(id) {
+  const payload = {
+    propiedad_id: +fval("tf-prop"), fecha: fval("tf-fecha"), tipo: fval("tf-tipo"),
+    hora_inicio: fval("tf-hin") || null, hora_fin: fval("tf-hfin") || null,
+    equipo_ids: $$("#tf-equipo .tg.on").map(t => +t.dataset.id), descripcion: fval("tf-desc") || null,
+  };
+  const err = id ? await dbTareaEstado(id, payload) : await dbCrearTarea(payload);
+  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  closeModal(); toast(id ? "Servicio actualizado" : "Servicio planificado", P(payload.propiedad_id)?.nombre || "", ICON.check, "ok"); rerender();
+}
+async function delTarea(id) {
+  if (!confirm("¿Eliminar este servicio?")) return;
+  const err = await dbBorrarTarea(id);
+  if (err) return toast("No se pudo eliminar", err, ICON.alert, "terra");
+  toast("Servicio eliminado", "", ICON.trash); rerender();
+}
+async function marcarTareaHecha(id) {
+  const err = await dbTareaEstado(id, { estado: "hecha", fin_real: new Date().toISOString() });
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Servicio completado ✓", "", ICON.check, "ok"); rerender();
+}
+async function tareaLlegada(id) {
+  const err = await dbTareaEstado(id, { estado: "encurso", inicio_real: new Date().toISOString() });
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  dbPingPosicion();
+  toast("¡Buen trabajo!", "Marca el checklist según avances.", ICON.broom, "ok"); rerender();
+}
+function openChecklist(id) {
+  const t = DB.tareas.find(x => x.id === id); if (!t) return;
+  const chk = t.checklist || [];
+  openModal(`
+    <div class="modal-head"><h3>Checklist · ${esc(P(t.propiedad_id)?.nombre || "")}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body">
+      <div class="prog-ring" style="margin-bottom:14px"><span class="bar" style="flex:1"><i id="chk-bar" style="width:${chk.length ? chk.filter(c => c.ok).length / chk.length * 100 : 0}%"></i></span><b id="chk-num">${chk.filter(c => c.ok).length}/${chk.length}</b></div>
+      <div class="check-list">
+        ${chk.map((c, i) => `
+          <button class="check-item ${c.ok ? "on" : ""}" onclick="tickChk(${id},${i},this)">
+            <span class="bx">${ICON.check}</span><span>${esc(c.t)}</span>
+          </button>`).join("") || '<p class="hint">Esta tarea no tiene checklist (configura la plantilla en Ajustes).</p>'}
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal();rerender()">Seguir luego</button>
+      <button class="btn primary" id="chk-fin" ${chk.length && chk.every(c => c.ok) ? "" : "disabled"} onclick="closeModal();tareaFinalizar(${id})">${ICON.check} Finalizar servicio</button>
+    </div>`);
+}
+async function tickChk(id, i, el) {
+  const t = DB.tareas.find(x => x.id === id); if (!t) return;
+  t.checklist[i].ok = !t.checklist[i].ok;
+  el.classList.toggle("on");
+  const n = t.checklist.filter(c => c.ok).length;
+  $("#chk-num").textContent = n + "/" + t.checklist.length;
+  $("#chk-bar").style.width = (n / t.checklist.length * 100) + "%";
+  const fin = $("#chk-fin"); if (fin) fin.disabled = !t.checklist.every(c => c.ok);
+  await DB.sb.from("tareas").update({ checklist: t.checklist }).eq("id", id);
+}
+async function tareaFinalizar(id) {
+  const err = await dbTareaEstado(id, { estado: "hecha", fin_real: new Date().toISOString() });
+  if (err) return toast("No se pudo finalizar", err, ICON.alert, "terra");
+  dbPingPosicion();
+  toast("¡Servicio terminado! ✨", "La oficina ya lo ve como hecho.", ICON.check, "ok"); rerender();
+}
+
+/* ============================================================
+   FICHAJE (empleado)
+   ============================================================ */
+async function ficharEntradaUI() {
+  const btn = $("#btn-fichar"); if (btn) { btn.disabled = true; btn.textContent = "Fichando…"; }
+  const err = await dbFicharEntrada();
+  if (err) { toast("No se pudo fichar", err, ICON.alert, "terra"); rerender(); return; }
+  toast("Entrada fichada", new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) + " · con tu ubicación", ICON.clock, "ok");
+  rerender();
+}
+function ficharSalidaUI() {
+  openModal(`
+    <div class="modal-head"><h3>Fichar salida</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><p style="font-size:14px">¿Cerrar la jornada de hoy a las <b>${new Date().toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" })}</b>?</p></div>
+    <div class="modal-foot"><button class="btn outline" onclick="closeModal()">Seguir trabajando</button>
+    <button class="btn primary" onclick="doFicharSalida()">${ICON.clock} Fichar salida</button></div>`);
+}
+async function doFicharSalida() {
+  closeModal();
+  const err = await dbFicharSalida();
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Salida fichada", "Jornada guardada. ¡Hasta mañana!", ICON.check, "ok"); rerender();
+}
+async function pausaUI() {
+  const err = await dbPausa();
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  rerender();
+}
+async function actualizarPosicionUI() {
+  await dbPingPosicion();
+  toast("Posición actualizada", "La oficina te ve en el mapa.", ICON.gps, "ok");
+}
+
+/* ============================================================
+   INCIDENCIAS
+   ============================================================ */
+function openNuevaIncidencia(propId) {
+  if (!DB.props.length) return toast("Primero añade propiedades", "", ICON.alert, "terra");
+  openModal(`
+    <div class="modal-head"><h3>Nueva incidencia</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="f-field"><label>Propiedad</label>
+          <select id="ni-prop">${DB.props.map(p => `<option value="${p.id}" ${propId === p.id ? "selected" : ""}>${esc(p.nombre)}</option>`).join("")}</select></div>
+        <div class="f-field"><label>Prioridad</label>
+          <select id="ni-prio"><option value="baja">Baja</option><option value="media" selected>Media</option><option value="alta">Alta</option></select></div>
+        <div class="f-field full"><label>¿Qué ha pasado? *</label><input id="ni-tit" placeholder="Ej. Persiana atascada en el salón"></div>
+        <div class="f-field full"><label>Detalle</label><textarea id="ni-desc" placeholder="Cuéntalo en una frase; con la foto suele bastar."></textarea></div>
+        <div class="full"><label class="file-btn">${ICON.camera} Hacer foto o adjuntar<input type="file" id="ni-fotos" accept="image/*" capture="environment" multiple onchange="previewFotos(this)"></label>
+          <div class="thumbs" id="ni-thumbs"></div></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn danger" id="ni-send" onclick="crearIncidencia()">${ICON.send} Enviar incidencia</button>
+    </div>`);
+}
+function previewFotos(input) {
+  const box = $("#ni-thumbs"); box.innerHTML = "";
+  [...input.files].slice(0, 6).forEach(f => {
+    const img = document.createElement("img");
+    img.src = URL.createObjectURL(f); box.appendChild(img);
+  });
+}
+async function crearIncidencia() {
+  const titulo = fval("ni-tit");
+  if (!titulo) return toast("Falta el título", "Di en una frase qué ha pasado.", ICON.alert, "terra");
+  const btn = $("#ni-send"); btn.disabled = true; btn.textContent = "Enviando…";
+  const err = await dbCrearIncidencia({
+    propiedad_id: +fval("ni-prop"), titulo, descripcion: fval("ni-desc") || null, prioridad: fval("ni-prio"),
+  }, $("#ni-fotos")?.files);
+  if (err) { btn.disabled = false; btn.textContent = "Enviar incidencia"; return toast("No se pudo enviar", err, ICON.alert, "terra"); }
+  closeModal(); toast("Incidencia enviada", "La oficina ya la tiene.", ICON.alert, "terra"); rerender();
+}
+async function abrirIncidencia(id) {
+  const i = DB.incidencias.find(x => x.id === id); if (!i) return;
+  openDrawer(drawerIncidencia(i));
+  const box = $("#inc-fotos"); if (!box) return;
+  box.innerHTML = "";
+  for (const path of i.fotos || []) {
+    const url = await fotoUrl(path);
+    if (url) box.insertAdjacentHTML("beforeend", `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="foto incidencia"></a>`);
+  }
+  if (!(i.fotos || []).length) box.innerHTML = "";
+}
+async function comentarInc(id) {
+  const txt = fval("inc-coment"); if (!txt) return;
+  const err = await dbComentarIncidencia(id, txt);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  abrirIncidencia(id);
+}
+async function resolverInc(id) {
+  const err = await dbResolverIncidencia(id, fval("inc-coste"));
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Incidencia resuelta ✓", "", ICON.check, "ok"); closeDrawer(); rerender();
+}
+
+/* ============================================================
+   FACTURACIÓN
+   ============================================================ */
+function openGenerarFacturas() {
+  const mes = addMeses(mesISO(), -1);
+  openModal(`
+    <div class="modal-head"><h3>Generar facturas del mes</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body">
+      <div class="f-field"><label>Mes a facturar</label><input id="gf-mes" type="month" value="${mes}"></div>
+      <p class="form-note">Crea un <b>borrador por propietario</b> con: tarifa de gestión mensual de cada propiedad + limpiezas hechas × tarifa por limpieza.
+      Revisas los borradores y los emites cuando quieras (ahí reciben número correlativo).</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" id="gf-go" onclick="doGenerarFacturas()">${ICON.invoice} Generar borradores</button>
+    </div>`);
+}
+async function doGenerarFacturas() {
+  const mes = fval("gf-mes"); if (!mes) return;
+  const btn = $("#gf-go"); btn.disabled = true; btn.textContent = "Generando…";
+  const n = await dbGenerarFacturasMes(mes);
+  closeModal();
+  toast(n ? `${n} borrador${n > 1 ? "es" : ""} creado${n > 1 ? "s" : ""}` : "Nada que facturar",
+    n ? "Revísalos y pulsa Emitir." : "Ese mes no hay tarifas ni limpiezas facturables (revisa las tarifas de cada propiedad).",
+    ICON.invoice, n ? "ok" : "");
+  STATE.factFilter = n ? "borrador" : STATE.factFilter; rerender();
+}
+function openFacturaManual() {
+  openModal(`
+    <div class="modal-head"><h3>Factura manual</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field full"><label>Cliente *</label><input id="fm-cliente" placeholder="Hotel / propietario / empresa"></div>
+      <div class="f-field full"><label>Concepto *</label><input id="fm-concepto" placeholder="Ej. Servicio de lavandería junio · 420 kg"></div>
+      <div class="f-field"><label>Base imponible € *</label><input id="fm-base" type="number" step="0.01" min="0"></div>
+      <div class="f-field"><label>Fecha</label><input id="fm-fecha" type="date" value="${hoyISO()}"></div>
+    </div></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" onclick="crearFacturaManual()">${ICON.check} Crear borrador</button>
+    </div>`);
+}
+async function crearFacturaManual() {
+  const cliente = fval("fm-cliente"), concepto = fval("fm-concepto"), base = fnum("fm-base");
+  if (!cliente || !concepto || !base) return toast("Faltan datos", "Cliente, concepto y base son obligatorios.", ICON.alert, "terra");
+  const { error } = await DB.sb.from("facturas").insert({ cliente, concepto, base, fecha: fval("fm-fecha") || hoyISO(), lineas: [{ c: concepto, importe: base }], tipo: "Manual" });
+  if (error) return toast("No se pudo crear", limpiaErr(error.message), ICON.alert, "terra");
+  await dbCargarTodo(); closeModal();
+  toast("Borrador creado", cliente + " · " + eur(base), ICON.invoice, "ok"); rerender();
+}
+async function emitirFacturaUI(id) {
+  const r = await dbEmitirFactura(id);
+  if (r.error) return toast("No se pudo emitir", r.error, ICON.alert, "terra");
+  toast("Factura emitida", r.numero, ICON.send, "ok"); rerender();
+}
+async function cobrarFacturaUI(id) {
+  const err = await dbCobrarFactura(id);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Factura cobrada ✓", "", ICON.check, "ok"); rerender();
+}
+
+/* ============================================================
+   AJUSTES
+   ============================================================ */
+async function guardarEmpresa() {
+  const valor = {};
+  ["nombre", "cif", "direccion", "telefono", "email", "iban"].forEach(k => valor[k] = fval("emp-" + k));
+  const err = await dbSetAjuste("empresa", valor);
+  if (err) return toast("No se pudo guardar", err, ICON.alert, "terra");
+  toast("Datos de empresa guardados", "", ICON.check, "ok"); rerender();
+}
+async function addChecklistStep() {
+  const v = fval("chk-new"); if (!v) return;
+  const chk = [...(DB.ajustes.checklist_base || []), v];
+  const err = await dbSetAjuste("checklist_base", chk);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Paso añadido", "Se aplicará a los próximos servicios.", ICON.check, "ok"); rerender();
+}
+async function quitarChecklist(i) {
+  const chk = [...(DB.ajustes.checklist_base || [])]; chk.splice(i, 1);
+  const err = await dbSetAjuste("checklist_base", chk);
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  rerender();
+}
+async function activarDireccionUI(uid) {
+  const err = await dbActivarDireccion(uid);
+  if (err) return toast("No se pudo activar", err, ICON.alert, "terra");
+  toast("Cuenta activada como dirección", "", ICON.check, "ok"); rerender();
+}
+
+/* ============================================================
+   DOCUMENTOS DE PROPIEDAD
+   ============================================================ */
+async function cargarDocs(propId) {
+  const box = $("#docs-list"); if (!box) return;
+  const docs = await dbListarDocumentos(propId);
+  if (!docs.length) { box.innerHTML = `<p class="hint">Sin documentos. Sube el contrato, la licencia o el inventario.</p>`; return; }
+  box.innerHTML = docs.map(d => `
+    <div class="doc-row">${ICON.doc}<b>${esc(d.name.replace(/^\d+_/, ""))}</b>
+      <span class="sz">${d.metadata?.size ? Math.round(d.metadata.size / 1024) + " KB" : ""}</span>
+      <button class="btn xs outline" onclick="abrirDoc('${esc(`documentos/${propId}/${d.name}`)}')">${ICON.eye} Ver</button>
+    </div>`).join("");
+}
+async function abrirDoc(path) {
+  const url = await fotoUrl(path);
+  if (url) window.open(url, "_blank", "noopener");
+}
+async function subirDoc(propId, input) {
+  const f = input.files[0]; if (!f) return;
+  const err = await dbSubirDocumento(propId, f);
+  if (err) return toast("No se pudo subir", err, ICON.alert, "terra");
+  toast("Documento subido", f.name, ICON.check, "ok");
+  cargarDocs(propId);
+}
+
+/* ============================================================
+   MAPA: tooltips
+   ============================================================ */
+document.addEventListener("pointerover", e => {
+  const tgt = e.target.closest("[data-tip]");
+  const tip = $("#map-tip"); if (!tip) return;
+  if (tgt && tgt.closest("#map-wrap")) {
+    tip.innerHTML = tgt.dataset.tip;
+    tip.style.left = tgt.style.left; tip.style.top = tgt.style.top;
+    tip.classList.add("show");
+  } else tip.classList.remove("show");
+});
+
+/* ============================================================
+   ARRANQUE
+   ============================================================ */
+window.addEventListener("DOMContentLoaded", async () => {
+  startLogin();
+  $("#hamb").addEventListener("click", () => document.body.classList.toggle("nav-open"));
+  $("#overlay").addEventListener("click", () => document.body.classList.remove("nav-open"));
+  $("#drawer-veil").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { closeModal(); closeDrawer(); } });
+
+  dbInit();
+  if (!DB.ready) {
+    $("#setup-aviso").style.display = "";
+    $$("#auth-forms input, #auth-forms button").forEach(el => el.disabled = true);
+    return;
+  }
+  await bootSesion();   // si hay sesión guardada entra directo
+});

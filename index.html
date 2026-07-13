@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hygge Services Mallorca · Portal</title>
+<meta name="description" content="Portal operativo de Hygge Services Mallorca: propiedades, equipo, fichajes, incidencias, informes y facturación.">
+<link rel="icon" type="image/png" href="assets/logo-hygge.png">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div id="cursor-glow" aria-hidden="true"></div>
+
+<!-- ============ LOGIN ============ -->
+<div id="login">
+  <canvas id="login-canvas" aria-hidden="true"></canvas>
+  <div class="login-veil" aria-hidden="true"></div>
+
+  <div class="login-panel">
+    <img class="login-logo" src="assets/logo-blanco.png" alt="Hygge Services Mallorca">
+    <div class="login-eyebrow">Portal de gestión</div>
+    <h1 class="login-title">Bienvenido</h1>
+    <p class="login-sub">Propiedades · equipo · fichajes · facturación</p>
+
+    <!-- aviso de configuración pendiente -->
+    <div id="setup-aviso" style="display:none" class="setup-box">
+      <b>Falta conectar la base de datos.</b>
+      Rellena <code>js/config.js</code> con la URL y la anon key de tu proyecto de Supabase
+      (instrucciones completas en <code>SETUP.md</code>).
+    </div>
+
+    <div id="auth-forms">
+      <div class="auth-tabs">
+        <button id="tab-login" class="on" onclick="authTab('login')">Entrar</button>
+        <button id="tab-signup" onclick="authTab('signup')">Crear cuenta</button>
+      </div>
+
+      <div id="auth-err" class="auth-err" style="display:none"></div>
+
+      <form id="form-login" onsubmit="doLogin(event)">
+        <div class="login-field">
+          <label for="lg-email">Email</label>
+          <input id="lg-email" type="email" autocomplete="username" required>
+        </div>
+        <div class="login-field">
+          <label for="lg-pass">Contraseña</label>
+          <input id="lg-pass" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="login-actions">
+          <button class="btn-gold" id="btn-login" type="submit">Entrar</button>
+        </div>
+      </form>
+
+      <form id="form-signup" style="display:none" onsubmit="doSignup(event)">
+        <div class="login-field">
+          <label for="su-nombre">Nombre y apellido</label>
+          <input id="su-nombre" type="text" required>
+        </div>
+        <div class="login-field">
+          <label for="su-email">Email</label>
+          <input id="su-email" type="email" autocomplete="username" required>
+        </div>
+        <div class="login-field">
+          <label for="su-pass">Contraseña (mín. 6)</label>
+          <input id="su-pass" type="password" autocomplete="new-password" minlength="6" required>
+        </div>
+        <div class="login-field">
+          <label for="su-codigo">Código de equipo <span style="text-transform:none;letter-spacing:0;color:#7c8174">(si te lo ha dado la oficina)</span></label>
+          <input id="su-codigo" type="text" placeholder="Vacío si eres dirección" autocomplete="off">
+        </div>
+        <div class="login-actions">
+          <button class="btn-gold" id="btn-signup" type="submit">Crear cuenta</button>
+        </div>
+      </form>
+    </div>
+
+    <p class="login-note">Acceso privado · <b>Hygge Services Mallorca S.L.</b></p>
+  </div>
+  <div class="login-brandline">Cada punto dorado, una propiedad bajo cuidado Hygge en el <span>Llevant de Mallorca</span></div>
+</div>
+
+<!-- ============ PANTALLA CUENTA PENDIENTE ============ -->
+<div id="pendiente" class="pend-screen" style="display:none">
+  <div class="pend-card">
+    <img src="assets/logo-hygge.png" alt="Hygge" style="width:84px;margin:0 auto 14px">
+    <h2>Cuenta creada, acceso pendiente</h2>
+    <p id="pendiente-txt">Pide a Dirección que active tu cuenta desde Ajustes → Usuarios, o vuelve a entrar con un código de equipo.</p>
+    <button class="btn primary" onclick="dbLogout()">Salir</button>
+  </div>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app">
+  <aside id="sidebar">
+    <div class="sb-brand">
+      <img src="assets/logo-blanco.png" alt="Hygge">
+      <div><div class="t">Hygge Services</div><div class="s">Portal Mallorca</div></div>
+    </div>
+    <nav class="sb-nav" id="sb-nav"></nav>
+    <div class="sb-foot"><button class="sb-user" id="sb-user"></button></div>
+  </aside>
+  <div id="overlay"></div>
+
+  <div id="main">
+    <header id="topbar">
+      <button id="hamb" aria-label="Menú">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <div>
+        <div class="tb-title" id="tb-title"></div>
+        <div class="tb-crumb" id="tb-crumb"></div>
+      </div>
+      <div class="tb-search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6"/><path d="m15.5 15.5 4.5 4.5"/></svg>
+        <input placeholder="Buscar propiedad o persona…" oninput="searchInput(this.value)" onfocus="searchInput(this.value)">
+        <div class="tb-results" id="tb-results"></div>
+      </div>
+      <span class="tb-clock" id="tb-clock"></span>
+      <span class="live-dot" id="live-dot" title="Conectado en tiempo real"></span>
+      <div class="tb-menu">
+        <button class="tb-ico" id="user-btn" onclick="toggleDrop('#user-drop')" aria-label="Usuario" style="background:var(--gold);border-color:var(--gold);color:#241d0c;font-weight:700;font-size:12px"></button>
+        <div class="tb-drop" id="user-drop" style="width:250px">
+          <div style="padding:14px 16px 4px"><b id="user-drop-nombre"></b><div class="hint" id="user-drop-rol"></div></div>
+          <button class="menu-item" id="menu-ajustes" onclick="toggleDrop('#user-drop');go('ajustes')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 4v2.2M12 17.8V20M4 12h2.2M17.8 12H20M6.3 6.3l1.6 1.6M16.1 16.1l1.6 1.6M17.7 6.3l-1.6 1.6M7.9 16.1l-1.6 1.6"/></svg>
+            Ajustes</button>
+          <button class="menu-item" onclick="dbLogout()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4H6a1.5 1.5 0 0 0-1.5 1.5v13A1.5 1.5 0 0 0 6 20h8"/><path d="m16 8 4 4-4 4M20 12H9.5"/></svg>
+            Cerrar sesión</button>
+        </div>
+      </div>
+    </header>
+    <main id="content"></main>
+  </div>
+</div>
+
+<!-- drawer lateral -->
+<div id="drawer-veil"></div>
+<aside id="drawer" aria-live="polite"></aside>
+
+<!-- modales y toasts -->
+<div id="modal-root"></div>
+<div id="toasts" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.47.10/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/db.js"></script>
+<script src="js/views.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
