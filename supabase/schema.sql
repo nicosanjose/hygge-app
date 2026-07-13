@@ -473,8 +473,12 @@ create policy fotos_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'fotos');
 drop policy if exists fotos_select on storage.objects;
 create policy fotos_select on storage.objects for select to authenticated
-  using (bucket_id = 'fotos'
-         and (is_direccion() or (storage.foldername(name))[1] not in ('documentos','empleados','fichajes','ausencias')));
+  using (bucket_id = 'fotos' and (
+    is_direccion()
+    or (storage.foldername(name))[1] not in ('documentos','empleados','fichajes','ausencias')
+    -- cada trabajador puede leer SUS fotos de fichaje (necesario también para subirlas)
+    or ((storage.foldername(name))[1] = 'fichajes' and (storage.foldername(name))[2] = my_emp()::text)
+  ));
 drop policy if exists fotos_delete on storage.objects;
 create policy fotos_delete on storage.objects for delete to authenticated
   using (bucket_id = 'fotos' and is_direccion());
