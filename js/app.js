@@ -358,6 +358,9 @@ function openPropForm(id) {
         <div class="tag-multi" id="pf-canales">${["Airbnb", "Booking", "Vrbo", "Directa"].map(c => `<span class="tg ${(p.canales || []).includes(c) ? "on" : ""}" onclick="this.classList.toggle('on')">${c}</span>`).join("")}</div></div>
       <div class="f-field"><label>Piscina</label><select id="pf-piscina"><option value="no" ${!p.piscina ? "selected" : ""}>No</option><option value="si" ${p.piscina ? "selected" : ""}>Sí</option></select></div>
       <div class="f-field"><label>Activa</label><select id="pf-activa"><option value="si" ${p.activa !== false ? "selected" : ""}>Sí</option><option value="no" ${p.activa === false ? "selected" : ""}>No</option></select></div>
+      <div class="f-field full"><label>Coordenadas GPS (opcional)</label>
+        <input id="pf-coords" value="${p.lat ? p.lat + ", " + p.lng : ""}" placeholder="39.6936, 3.3494 — en Google Maps: clic derecho sobre la casa → copiar coordenadas">
+      </div>
       <div class="f-field full"><label>Foto de portada</label>
         <div class="field-file"><label class="file-btn">${ICON.camera} Elegir imagen<input type="file" id="pf-foto" accept="image/*"></label>
         <span class="hint">${p.foto_path ? "Ya tiene foto: se sustituirá si eliges otra." : "Opcional."}</span></div></div>
@@ -380,6 +383,9 @@ async function guardarProp(id) {
     canales: $$("#pf-canales .tg.on").map(t => t.textContent), piscina: fval("pf-piscina") === "si",
     activa: fval("pf-activa") === "si", notas: fval("pf-notas") || null,
   };
+  const coords = fval("pf-coords").match(/(-?\d+[.,]?\d*)\s*[,;]\s*(-?\d+[.,]?\d*)/);
+  payload.lat = coords ? +coords[1].replace(",", ".") : null;
+  payload.lng = coords ? +coords[2].replace(",", ".") : null;
   const err = await dbGuardarProp(payload, id, $("#pf-foto")?.files[0]);
   if (err) { btn.disabled = false; btn.textContent = "Guardar"; return toast("No se pudo guardar", err, ICON.alert, "terra"); }
   closeModal(); toast(id ? "Propiedad actualizada" : "Propiedad creada", nombre, ICON.check, "ok"); rerender();
@@ -791,17 +797,65 @@ async function subirDoc(propId, input) {
 }
 
 /* ============================================================
-   MAPA: tooltips
+   MAPA REAL DE MALLORCA (Leaflet + OpenStreetMap/CARTO)
    ============================================================ */
-document.addEventListener("pointerover", e => {
-  const tgt = e.target.closest("[data-tip]");
-  const tip = $("#map-tip"); if (!tip) return;
-  if (tgt && tgt.closest("#map-wrap")) {
-    tip.innerHTML = tgt.dataset.tip;
-    tip.style.left = tgt.style.left; tip.style.top = tgt.style.top;
-    tip.classList.add("show");
-  } else tip.classList.remove("show");
-});
+let LMAP = null;
+const MALLORCA_BOUNDS = [[39.25, 2.28], [39.98, 3.52]];
+function initLiveMap() {
+  const el = $("#mapa-real");
+  if (!el) return;
+  if (!window.L) { el.innerHTML = '<p class="hint" style="padding:20px">No se pudo cargar el mapa (sin conexión al CDN de Leaflet).</p>'; return; }
+  if (LMAP) { try { LMAP.remove(); } catch {} LMAP = null; }
+  LMAP = L.map(el, { zoomControl: true, minZoom: 5, maxZoom: 18, zoomSnap: .5 });
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · © CARTO',
+    subdomains: "abcd", maxZoom: 19,
+  }).addTo(LMAP);
+
+  // propiedades (casita dorada)
+  DB.props.filter(p => p.activa).forEach(p => {
+    const pos = posProp(p);
+    L.marker([pos.lat, pos.lng], {
+      icon: L.divIcon({ className: "lf-pin", html: `<span class="ho">${ICON.house}</span>`, iconSize: [26, 26], iconAnchor: [13, 24] }),
+    }).addTo(LMAP)
+      .bindTooltip(`<b>${esc(p.nombre)}</b>${p.zona ? "<br>" + esc(p.zona) : ""}`, { direction: "top", offset: [0, -22], className: "lf-tip" })
+      .on("click", () => { STATE.prop = p.id; STATE.propTab = "resumen"; go("propdetail"); });
+  });
+
+  // equipo fichado (avatar con anillo de estado, GPS real)
+  const pts = [];
+  DB.emp.filter(e => e.activo && fichajeAbierto(e.id)).forEach(e => {
+    const st = estadoEmpleado(e), pos = posEmpleado(e);
+    pts.push([pos.lat, pos.lng]);
+    L.marker([pos.lat, pos.lng], {
+      zIndexOffset: 500,
+      icon: L.divIcon({
+        className: "lf-emp" + (["limpiando", "mantenimiento"].includes(st.key) ? " working" : ""),
+        html: `<span class="av" style="background:${e.color};--st:${EST[st.key].col}">${ini(e.nombre)}</span>`,
+        iconSize: [34, 34], iconAnchor: [17, 17],
+      }),
+    }).addTo(LMAP)
+      .bindTooltip(`<b>${esc(e.nombre)}</b><br>${EST[st.key].txt}${st.prop ? " · " + esc(st.prop.nombre) : ""}${st.desde ? " · desde " + st.desde : ""}`, { direction: "top", offset: [0, -18], className: "lf-tip" })
+      .on("click", () => openDrawer(drawerEmpleado(e)));
+  });
+  STATE._mapPts = pts;
+
+  if (STATE.mapView) LMAP.setView(STATE.mapView.c, STATE.mapView.z);   // conserva zoom/encuadre entre refrescos
+  else mapaVista(pts.length ? "equipo" : "isla");
+  LMAP.on("moveend", () => { STATE.mapView = { c: LMAP.getCenter(), z: LMAP.getZoom() }; });
+  setTimeout(() => { try { LMAP.invalidateSize(); } catch {} }, 120);
+}
+function mapaVista(k) {
+  if (!LMAP) return;
+  STATE.mapView = null;
+  if (k === "equipo" && (STATE._mapPts || []).length) {
+    const pts = STATE._mapPts;
+    if (pts.length === 1) LMAP.setView(pts[0], 14);
+    else LMAP.fitBounds(L.latLngBounds(pts).pad(.35));
+  } else {
+    LMAP.fitBounds(MALLORCA_BOUNDS, { padding: [12, 12] });
+  }
+}
 
 /* ============================================================
    ARRANQUE

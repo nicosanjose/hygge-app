@@ -887,3 +887,49 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 .tag-multi{display:flex;gap:7px;flex-wrap:wrap}
 .tag-multi .tg{border:1px solid var(--line);border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:700;color:var(--muted);cursor:pointer;transition:all var(--tr)}
 .tag-multi .tg.on{background:var(--sage);border-color:var(--sage);color:#fff}
+
+/* ============================================================
+   MAPA REAL (Leaflet) · Equipo en vivo
+   ============================================================ */
+.map-real-wrap{position:relative;z-index:1}
+#mapa-real{height:clamp(400px,64vh,620px);border-radius:var(--r);background:#dcebe7;outline:none}
+.leaflet-container{font-family:var(--font);border-radius:var(--r)}
+.leaflet-control-zoom{border:none!important;box-shadow:var(--sh-sm)!important;border-radius:10px!important;overflow:hidden}
+.leaflet-control-zoom a{width:32px!important;height:32px!important;line-height:32px!important;color:var(--ink-2)!important;border:1px solid var(--line)!important}
+.leaflet-control-zoom a:hover{background:var(--gold-soft)!important;color:var(--gold-deep)!important}
+.leaflet-control-attribution{font-size:10px!important;background:rgba(255,255,255,.72)!important;border-radius:8px 0 var(--r) 0;color:var(--muted)!important}
+.leaflet-control-attribution a{color:var(--sage)!important}
+
+.map-acciones{position:absolute;right:12px;top:12px;z-index:1001;display:flex;gap:6px}
+.map-acciones button{
+  display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.94);backdrop-filter:blur(5px);
+  border:1px solid var(--line);border-radius:10px;padding:7px 12px;font-size:12px;font-weight:700;color:var(--ink-2);
+  box-shadow:var(--sh-sm);transition:border-color var(--tr),transform var(--tr);
+}
+.map-acciones button:hover{border-color:var(--gold);transform:translateY(-1px)}
+.map-acciones button svg{width:13px;height:13px}
+.map-real-wrap .map-legend{z-index:1001}
+
+.lf-pin,.lf-emp{background:none;border:none}
+.lf-pin .ho{
+  width:25px;height:25px;border-radius:8px 8px 9px 9px;background:#fff;border:1.5px solid var(--gold);
+  color:var(--gold-deep);display:flex;align-items:center;justify-content:center;
+  box-shadow:0 3px 8px rgba(35,38,31,.3);cursor:pointer;transition:transform .15s;
+}
+.lf-pin:hover .ho{transform:scale(1.15)}
+.lf-pin .ho svg{width:13px;height:13px}
+.lf-emp .av{
+  width:33px;height:33px;border-radius:50%;color:#fff;font-size:11px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;border:2.5px solid #fff;
+  box-shadow:0 0 0 2.5px var(--st,#4f8a5c),0 4px 10px rgba(35,38,31,.32);cursor:pointer;
+  font-family:var(--font);transition:transform .15s;
+}
+.lf-emp:hover .av{transform:scale(1.12)}
+.lf-emp.working .av{animation:workPulse 2.2s ease-in-out infinite}
+.lf-tip{
+  background:#23261f!important;color:#f0f1e8!important;border:none!important;border-radius:11px!important;
+  box-shadow:var(--sh-md)!important;font-family:var(--font)!important;font-size:12px!important;
+  padding:8px 12px!important;line-height:1.45!important;
+}
+.lf-tip b{color:#f2d999}
+.lf-tip::before{display:none!important}

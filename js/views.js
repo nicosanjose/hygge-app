@@ -421,33 +421,6 @@ function mountPropDetail() {
 /* ============================================================
    EQUIPO EN VIVO
    ============================================================ */
-const MAP_TOWNS = [
-  { n: "Artà", x: 32, y: 38, big: true }, { n: "Capdepera", x: 63, y: 30, big: true },
-  { n: "Cala Ratjada", x: 77, y: 20 }, { n: "Canyamel", x: 71, y: 45 },
-  { n: "Cala Millor", x: 60, y: 72 }, { n: "Son Servera", x: 50, y: 62 },
-  { n: "Colònia de St. Pere", x: 14, y: 13 }, { n: "Betlem", x: 25, y: 10 }, { n: "Cala Mesquida", x: 58, y: 9 },
-];
-function mapBaseSVG() {
-  return `<svg class="map-base" viewBox="0 0 1000 640" preserveAspectRatio="none" aria-hidden="true">
-    <defs>
-      <linearGradient id="sea" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#dcebe7"/><stop offset="1" stop-color="#cfe3dd"/></linearGradient>
-      <linearGradient id="land" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3f0e4"/><stop offset="1" stop-color="#eae6d6"/></linearGradient>
-    </defs>
-    <rect width="1000" height="640" fill="url(#sea)"/>
-    <path d="M0 640V96Q60 74 96 58q54-24 96-22 46 2 92-14 30-10 56 6 22 14 40 34 16 18 42 22 34 6 96 4 44-2 82 18 30 16 44 44 12 26 30 44 22 22 26 52 4 28-8 56-14 30-40 46-30 18-48 44-16 24-24 54-8 32-30 52-24 22-56 26-40 6-70 30-24 20-54 14H0Z" fill="url(#land)" stroke="#d8d2bd" stroke-width="2.5"/>
-    <g stroke="#cbc6b0" stroke-width="4" fill="none" stroke-linecap="round" opacity=".85">
-      <path d="M320 244 Q470 170 630 192 Q710 152 770 128"/><path d="M320 244 Q220 170 140 84"/>
-      <path d="M630 192 Q700 240 710 288"/><path d="M320 244 Q420 320 500 396 Q560 428 600 460"/><path d="M500 396 Q590 400 706 410"/>
-    </g>
-    <g font-family="Product Sans,sans-serif" fill="#6d7266">
-      ${MAP_TOWNS.map(t => `
-        <circle cx="${t.x * 10}" cy="${t.y * 6.4}" r="${t.big ? 6 : 4.5}" fill="#fff" stroke="#8f9486" stroke-width="2"/>
-        <text x="${t.x * 10}" y="${t.y * 6.4 - 12}" text-anchor="middle" font-size="${t.big ? 15 : 13}" font-weight="${t.big ? 700 : 400}">${t.n}</text>`).join("")}
-      <text x="855" y="70" font-size="14" fill="#8ba39b" font-style="italic">Mar Mediterráneo</text>
-      <text x="30" y="612" font-size="13" fill="#9a957f">Llevant de Mallorca</text>
-    </g>
-  </svg>`;
-}
 function viewEquipo() {
   const activos = DB.emp.filter(e => e.activo);
   if (!activos.length) return vacio(ICON.users, "Da de alta a tu equipo",
@@ -462,19 +435,16 @@ function viewEquipo() {
   return `
   <div class="live-grid">
     <div class="card map-card tight">
-      <div class="map-wrap" id="map-wrap">
-        ${mapBaseSVG()}
-        <div class="map-note">Posiciones GPS reales del equipo fichado</div>
-        ${DB.props.filter(p => p.activa).map(p => { const pos = posProp(p); return `
-          <div class="map-pin" style="left:${pos.x}%;top:${pos.y}%" data-tip="<b>${esc(p.nombre)}</b>${esc(p.zona || "")}" data-prop-go="${p.id}"><span class="ho">${ICON.house}</span></div>`; }).join("")}
-        ${fichados.map(({ e, st }) => { const pos = posEmpleado(e); return `
-          <div class="map-emp ${["limpiando", "mantenimiento"].includes(st.key) ? "working" : ""}" style="left:${pos.x}%;top:${pos.y}%;--st:${EST[st.key].col}"
-            data-emp="${e.id}" data-tip="<b>${esc(e.nombre)}</b>${EST[st.key].txt}${st.prop ? " · " + esc(st.prop.nombre) : ""}${st.desde ? " · desde " + st.desde : ""}">
-            <span class="av" style="background:${e.color}">${ini(e.nombre)}</span></div>`; }).join("")}
-        <div class="map-tip" id="map-tip"></div>
+      <div class="map-real-wrap">
+        <div id="mapa-real" aria-label="Mapa de Mallorca con el equipo en tiempo real"></div>
+        <div class="map-acciones">
+          <button onclick="mapaVista('equipo')" title="Encuadrar al equipo fichado">${ICON.users} Equipo</button>
+          <button onclick="mapaVista('isla')" title="Ver Mallorca entera">${ICON.pin} Mallorca</button>
+        </div>
         <div class="map-legend">
           <span><i style="background:#4f8a5c"></i>Limpiando</span><span><i style="background:#b5533c"></i>Servicio</span>
           <span><i style="background:#4a7fa5"></i>De turno</span><span><i style="background:#c79c3d"></i>Descanso</span>
+          <span><i style="background:#fff;border:1.5px solid var(--gold);border-radius:3px"></i>Propiedad</span>
         </div>
       </div>
     </div>
@@ -1083,7 +1053,7 @@ const VIEWS = {
   dashboard:    { t: "Inicio",        c: "Resumen del día",                    r: viewDashboard,     m: () => mountDashboard() },
   propiedades:  { t: "Propiedades",   c: "Cartera en gestión",                 r: viewProps,         m: () => resolverFotos() },
   propdetail:   { t: "Propiedad",     c: "Ficha completa",                     r: viewPropDetail,    m: () => mountPropDetail() },
-  equipo:       { t: "Equipo en vivo",c: "Dónde está cada persona ahora",      r: viewEquipo,        m: () => {} },
+  equipo:       { t: "Equipo en vivo",c: "Dónde está cada persona ahora",      r: viewEquipo,        m: () => initLiveMap() },
   plan:         { t: "Planificación", c: "Check-outs → servicios → check-ins", r: viewPlan,          m: () => {} },
   fichajes:     { t: "Fichajes",      c: "Registro de jornada del equipo",     r: viewFichajes,      m: () => {} },
   incidencias:  { t: "Incidencias",   c: "Averías y avisos del equipo",        r: viewIncidencias,   m: () => {} },

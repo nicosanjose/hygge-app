@@ -135,33 +135,31 @@ function horasEmpleadoRango(empId, desde, hasta) {
     .reduce((a, f) => a + horasDeFichaje(f), 0));
 }
 
-/* proyección GPS real -> mapa esquemático del Llevant (x/y en %) */
-const MAPA_BOUNDS = { latMax: 39.80, latMin: 39.52, lngMin: 3.13, lngMax: 3.52 };
+/* posiciones reales en lat/lng (mapa Leaflet de Mallorca) */
 const OFICINA = { lat: 39.6936, lng: 3.3494 }; // Costa i Llobera 53, Artà
-function proyecta(lat, lng) {
-  const cl = (v, a, b) => Math.max(a, Math.min(b, v));
-  return {
-    x: cl((lng - MAPA_BOUNDS.lngMin) / (MAPA_BOUNDS.lngMax - MAPA_BOUNDS.lngMin) * 100, 3, 97),
-    y: cl((MAPA_BOUNDS.latMax - lat) / (MAPA_BOUNDS.latMax - MAPA_BOUNDS.latMin) * 100, 4, 94),
-  };
-}
-const ZONA_POS = {
-  "artà": { x: 32, y: 38 }, "capdepera": { x: 63, y: 30 }, "cala ratjada": { x: 77, y: 20 },
-  "canyamel": { x: 71, y: 45 }, "cala millor": { x: 60, y: 72 }, "son servera": { x: 50, y: 62 },
-  "colònia de sant pere": { x: 14, y: 13 }, "colonia de sant pere": { x: 14, y: 13 },
-  "betlem": { x: 25, y: 10 }, "cala mesquida": { x: 58, y: 9 }, "font de sa cala": { x: 74, y: 33 },
+const ZONA_POS = { // centros aproximados de núcleos, fallback si la propiedad no tiene coordenadas propias
+  "artà": [39.6936, 3.3494], "capdepera": [39.7027, 3.4355], "cala ratjada": [39.7128, 3.4629],
+  "canyamel": [39.6736, 3.4433], "cala millor": [39.5959, 3.3830], "son servera": [39.6211, 3.3613],
+  "colònia de sant pere": [39.7371, 3.2716], "colonia de sant pere": [39.7371, 3.2716],
+  "betlem": [39.7346, 3.3120], "cala mesquida": [39.7477, 3.4354], "font de sa cala": [39.6866, 3.4570],
+  "cala bona": [39.6070, 3.3937], "s'illot": [39.5807, 3.3468], "sa coma": [39.5850, 3.3660],
+  "porto cristo": [39.5417, 3.3358], "manacor": [39.5696, 3.2093], "sant llorenç": [39.6096, 3.2839],
+  "palma": [39.5696, 2.6502], "alcúdia": [39.8531, 3.1211], "alcudia": [39.8531, 3.1211],
+  "pollença": [39.8770, 3.0163], "pollenca": [39.8770, 3.0163], "inca": [39.7212, 2.9107],
+  "santanyí": [39.3548, 3.1290], "santanyi": [39.3548, 3.1290], "felanitx": [39.4696, 3.1481],
 };
 function posProp(p) {
-  if (p.lat && p.lng) return proyecta(+p.lat, +p.lng);
+  if (p.lat && p.lng) return { lat: +p.lat, lng: +p.lng };
   const z = (p.zona || "").toLowerCase().split(" (")[0].trim();
-  return ZONA_POS[z] || { x: 40, y: 45 };
+  const c = ZONA_POS[z];
+  return c ? { lat: c[0], lng: c[1] } : OFICINA;
 }
 function posEmpleado(e) {
   const pos = DB.posiciones.find(x => x.empleado_id === e.id);
-  if (pos) return proyecta(+pos.lat, +pos.lng);
+  if (pos) return { lat: +pos.lat, lng: +pos.lng };
   const t = tareaActiva(e.id);
   if (t && P(t.propiedad_id)) return posProp(P(t.propiedad_id));
-  return proyecta(OFICINA.lat, OFICINA.lng);
+  return OFICINA;
 }
 
 /* geolocalización del navegador (silenciosa si el usuario la deniega) */
