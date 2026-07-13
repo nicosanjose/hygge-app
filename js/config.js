@@ -4,6 +4,6 @@
    Supabase → Project Settings → API
    ============================================================ */
 const HYGGE_CONFIG = {
-  SUPABASE_URL: "",        // p. ej. "https://abcdefgh.supabase.co"
-  SUPABASE_ANON_KEY: "",   // la "anon public" key (es segura en el navegador)
+  SUPABASE_URL: "https://hfexhlhlqibpdyakzdjl.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_PX28y6DA0VLILxbssLrfKw_d_nB3NoL", // publishable key (segura en navegador, RLS manda)
 };
