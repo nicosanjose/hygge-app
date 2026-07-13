@@ -1058,11 +1058,11 @@ function openMejoraForm(ownerId, mejoraId) {
   openModal(`
     <div class="modal-head"><h3>${mejoraId ? "Editar propuesta" : "Nueva propuesta de mejora"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
     <div class="modal-body"><div class="form-grid">
-      <div class="f-field full"><label>Mejora *</label><input id="mj-titulo" value="${esc(m.titulo || "")}" placeholder="Ej. Colchonetas y toldo en la piscina · Gimnasio en el garaje"></div>
+      <div class="f-field full"><label>Mejora *</label><input id="mj-titulo" value="${esc(m.titulo || "")}" placeholder="Ej. Zona lounge en la piscina · Gimnasio equipado · Jacuzzi exterior"></div>
       <div class="f-field"><label>Propiedad</label><select id="mj-prop">${propsO.map(p => `<option value="${p.id}" ${m.propiedad_id === p.id ? "selected" : ""}>${esc(p.nombre)}</option>`).join("")}</select></div>
       <div class="f-field"><label>¿Quién la propone?</label>
         <select id="mj-origen"><option value="inquilino" ${m.origen === "inquilino" ? "selected" : ""}>Inquilino / huésped</option><option value="agencia" ${m.origen !== "inquilino" ? "selected" : ""}>La agencia (Hygge)</option></select></div>
-      <div class="f-field"><label>Mejora de precio €/noche *</label><input id="mj-inc" type="number" step="0.5" min="0" value="${m.incremento_precio ?? ""}" placeholder="8"></div>
+      <div class="f-field"><label>Mejora de precio €/noche *</label><input id="mj-inc" type="number" step="5" min="0" value="${m.incremento_precio ?? ""}" placeholder="150"></div>
       <div class="f-field"><label>Coste estimado €</label><input id="mj-coste" type="number" step="1" min="0" value="${m.coste_estimado ?? ""}" placeholder="opcional"></div>
       <div class="f-field full"><label>Quién lo sugirió / detalle</label><input id="mj-autor" value="${esc(m.autor || "")}" placeholder="Ej. lo pidieron 3 huéspedes este verano"></div>
       <div class="f-field full"><label>Descripción</label><textarea id="mj-desc">${esc(m.descripcion || "")}</textarea></div>

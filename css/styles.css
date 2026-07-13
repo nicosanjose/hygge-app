@@ -958,3 +958,8 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 .fich-fotos{display:inline-flex;gap:5px;align-items:center}
 .fich-fotos img{width:34px;height:34px;object-fit:cover;border-radius:8px;border:1px solid var(--line);cursor:pointer;transition:transform .15s}
 .fich-fotos a:hover img{transform:scale(1.5)}
+
+/* simulador de mejoras: seleccionar no es tachar */
+.check-item.sim.on span{text-decoration:none;opacity:1}
+.check-item.sim.on{background:var(--gold-soft);border-color:var(--gold-line)}
+.check-item.sim.on .bx{background:var(--gold);border-color:var(--gold)}

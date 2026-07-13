@@ -1552,7 +1552,7 @@ function viewOwnerMejoras() {
       <span class="sub">marca propuestas y mira cuánto subiría tu precio por noche y tus ingresos del mes</span></div>
     <div class="check-list">
       ${propuestas.map(m => `
-        <button class="check-item ${sel.has(m.id) ? "on" : ""}" onclick="toggleMejoraSel(${m.id})">
+        <button class="check-item sim ${sel.has(m.id) ? "on" : ""}" onclick="toggleMejoraSel(${m.id})">
           <span class="bx">${ICON.check}</span>
           <span style="flex:1;text-align:left">${esc(m.titulo)}
             <span class="hint" style="display:block;font-weight:400">${m.origen === "inquilino" ? "lo piden tus huéspedes" : "propuesta de Hygge"}${m.coste_estimado ? " · inversión ~" + eur0(m.coste_estimado) : ""} · ${esc(P(m.propiedad_id)?.nombre || "")}</span></span>
