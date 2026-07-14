@@ -87,33 +87,34 @@ body.glow-on #cursor-glow{opacity:1}
   pointer-events:none;
 }
 .login-panel{
-  position:relative;z-index:2;width:min(420px,92vw);
+  position:relative;z-index:2;width:min(400px,92vw);
   background:rgba(30,34,27,.72);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border:1px solid rgba(199,156,61,.25);border-radius:22px;
-  padding:38px 38px 30px;box-shadow:0 30px 80px rgba(0,0,0,.45);
+  padding:24px 32px 20px;box-shadow:0 30px 80px rgba(0,0,0,.45);
   margin-left:clamp(0px,6vw,90px);margin-right:auto;
+  max-height:94vh;overflow:auto;
   animation:loginIn .8s cubic-bezier(.2,.8,.2,1) both .15s;
 }
 @keyframes loginIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
-.login-logo{width:150px;margin:0 auto 6px;filter:drop-shadow(0 4px 18px rgba(0,0,0,.35))}
+.login-logo{width:104px;margin:0 auto 4px;display:block;filter:drop-shadow(0 4px 18px rgba(0,0,0,.35))}
 .login-eyebrow{
   text-align:center;color:var(--gold);font-size:11px;font-weight:700;
   letter-spacing:.28em;text-transform:uppercase;margin-bottom:6px;
 }
-.login-title{color:#f4f2ea;text-align:center;font-size:24px;font-weight:700;letter-spacing:.01em}
-.login-sub{color:#a9ada0;text-align:center;font-size:13px;margin:8px 0 26px}
-.login-field{margin-bottom:14px}
+.login-title{color:#f4f2ea;text-align:center;font-size:22px;font-weight:700;letter-spacing:.01em}
+.login-sub{color:#a9ada0;text-align:center;font-size:12.5px;margin:6px 0 18px}
+.login-field{margin-bottom:12px}
 .login-field label{display:block;color:#8f9487;font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;margin-bottom:6px}
 .login-field input{
   width:100%;background:rgba(20,23,18,.65);border:1px solid #454b3f;border-radius:12px;
-  padding:12px 14px;color:#eef0e8;font-size:15px;outline:none;transition:border-color var(--tr),box-shadow var(--tr);
+  padding:10px 14px;color:#eef0e8;font-size:14.5px;outline:none;transition:border-color var(--tr),box-shadow var(--tr);
 }
 .login-field input:focus{border-color:var(--gold);box-shadow:0 0 0 3px rgba(199,156,61,.18)}
-.login-actions{display:flex;flex-direction:column;gap:10px;margin-top:22px}
+.login-actions{display:flex;flex-direction:column;gap:9px;margin-top:16px}
 .btn-gold{
   display:inline-flex;align-items:center;justify-content:center;gap:9px;
   background:linear-gradient(180deg,#d3a94b,var(--gold));color:#241d0c;
-  font-weight:700;font-size:15px;border-radius:12px;padding:13px 18px;
+  font-weight:700;font-size:15px;border-radius:12px;padding:12px 18px;
   box-shadow:0 6px 18px rgba(199,156,61,.35),inset 0 1px 0 rgba(255,255,255,.35);
   transition:transform var(--tr),box-shadow var(--tr),filter var(--tr);
 }
@@ -122,16 +123,11 @@ body.glow-on #cursor-glow{opacity:1}
 .btn-ghost-light{
   display:inline-flex;align-items:center;justify-content:center;gap:9px;
   border:1px solid #4d5346;color:#d7dacd;font-weight:700;font-size:14px;
-  border-radius:12px;padding:12px 18px;transition:border-color var(--tr),background var(--tr),transform var(--tr);
+  border-radius:12px;padding:10px 18px;transition:border-color var(--tr),background var(--tr),transform var(--tr);
 }
 .btn-ghost-light:hover{border-color:var(--gold);background:rgba(199,156,61,.08);transform:translateY(-1px)}
-.login-note{margin-top:22px;text-align:center;color:#7c8174;font-size:11.5px}
+.login-note{margin-top:14px;text-align:center;color:#7c8174;font-size:11.5px}
 .login-note b{color:#a9ada0}
-.login-brandline{
-  position:absolute;bottom:18px;left:0;right:0;text-align:center;z-index:2;
-  color:#6f7566;font-size:11.5px;letter-spacing:.06em;
-}
-.login-brandline span{color:var(--gold)}
 
 /* ============================================================
    APP SHELL
