@@ -1020,3 +1020,6 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 .mh-tarea .tx b{font-size:13.5px}
 .mh-tarea .tx span{display:block;font-size:12px;color:var(--muted)}
 .mh-libre{font-size:12px;color:var(--muted);padding:8px 2px;display:inline-block}
+
+/* red de seguridad: iconos inline dentro de textos hint siempre a tamaño de texto */
+.hint svg{width:14px;height:14px;vertical-align:-2px}
