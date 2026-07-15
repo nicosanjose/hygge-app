@@ -9,7 +9,7 @@ const DB = {
   emp: [], empDatos: [], props: [], owners: [], reservas: [], tareas: [],
   fichajes: [], pausas: [], posiciones: [], incidencias: [], eventos: [],
   facturas: [], compras: [], ausencias: [], resenas: [], mejoras: [],
-  clientes: [], clienteContactos: [], ajustes: {}, pendientes: [],
+  clientes: [], clienteContactos: [], lavanderia: [], lavAcceso: null, ajustes: {}, pendientes: [],
   fotoUrls: {},                          // path -> signed url (caché)
   cargado: false,
 };
@@ -64,7 +64,7 @@ const limpiaErr = m => (m || "").replace(/^.*?exception:?\s*/i, "").replace("new
 async function dbCargarTodo() {
   const desde = addDias(hoyISO(), -400), hasta = addDias(hoyISO(), 400);
   const q = (t, sel, mod) => { let x = DB.sb.from(t).select(sel || "*"); if (mod) x = mod(x); return x; };
-  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aus, rsn, mej, cli, cct, aj, pend] = await Promise.all([
+  const [emp, empd, props, owners, res, tar, fic, pau, pos, inc, ev, fac, com, aus, rsn, mej, cli, cct, lav, lacc, aj, pend] = await Promise.all([
     q("empleados", "*", x => x.order("nombre")),
     q("empleados_datos", "*"),
     q("propiedades", "*", x => x.order("nombre")),
@@ -83,6 +83,8 @@ async function dbCargarTodo() {
     q("mejoras", "*", x => x.order("created_at", { ascending: false })),
     q("clientes", "*", x => x.order("nombre")),
     q("cliente_contactos", "*", x => x.order("fecha", { ascending: false })),
+    q("lavanderia", "*"),
+    q("lavanderia_acceso", "*"),
     q("ajustes", "*"),
     DB.sb.from("profiles").select("*").is("rol", null),
   ]);
@@ -94,6 +96,7 @@ async function dbCargarTodo() {
   DB.ausencias = aus.data || [];
   DB.resenas = rsn.data || []; DB.mejoras = mej.data || [];
   DB.clientes = cli.data || []; DB.clienteContactos = cct.data || [];
+  DB.lavanderia = lav.data || []; DB.lavAcceso = (lacc.data || [])[0] || null;
   DB.ajustes = Object.fromEntries((aj.data || []).map(a => [a.clave, a.valor]));
   DB.pendientes = pend.data || [];
   DB.cargado = true;
@@ -111,6 +114,7 @@ function dbRealtime() {
     .on("postgres_changes", { event: "*", schema: "public", table: "tareas" }, dbRecargaSuave)
     .on("postgres_changes", { event: "*", schema: "public", table: "incidencias" }, dbRecargaSuave)
     .on("postgres_changes", { event: "*", schema: "public", table: "compras" }, dbRecargaSuave)
+    .on("postgres_changes", { event: "*", schema: "public", table: "lavanderia" }, dbRecargaSuave)
     .subscribe();
 }
 
@@ -418,6 +422,23 @@ const haceTxt = fechaTs => {
   if (d < 365) return `hace ${Math.round(d / 30)} mes${d >= 60 ? "es" : ""}`;
   return `hace más de ${Math.floor(d / 365)} año${d >= 730 ? "s" : ""}`;
 };
+/* ---------- lavandería (estado de la ropa por propiedad) ---------- */
+const ROPA_ESTADOS = { vacio: "Sin ropa fuera", enviada: "Enviada a lavandería", proceso: "En proceso", lista: "Lista para recoger" };
+const ropaDe = propId => DB.lavanderia.find(l => l.propiedad_id === propId) || { propiedad_id: propId, estado: "vacio" };
+async function dbSetRopa(propId, estado) {
+  const { error } = await DB.sb.from("lavanderia").upsert({
+    propiedad_id: propId, estado, updated_at: new Date().toISOString(), updated_by: DB.profile?.nombre || null,
+  });
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+async function dbRegenCodigoLav() {
+  const codigo = "lv" + Math.random().toString(16).slice(2, 8);
+  const { error } = await DB.sb.from("lavanderia_acceso").update({ codigo_acceso: codigo }).eq("unico", true);
+  if (error) return limpiaErr(error.message);
+  await dbCargarTodo(); return null;
+}
+
 /* teléfono → enlace wa.me (quita símbolos; si son 9 cifras, antepone 34) */
 function telWa(tel) {
   let n = (tel || "").replace(/\D/g, "");

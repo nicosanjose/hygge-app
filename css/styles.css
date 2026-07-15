@@ -849,6 +849,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 
 .field-file{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .field-file input[type=file]{display:none}
+.file-btn input[type=file]{display:none}
 .file-btn{display:inline-flex;align-items:center;gap:8px;border:1.5px dashed var(--line);border-radius:11px;padding:9px 14px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;transition:border-color var(--tr),color var(--tr)}
 .file-btn:hover{border-color:var(--gold);color:var(--gold-deep)}
 .file-btn svg{width:16px;height:16px}
@@ -962,3 +963,21 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 
 /* ---------- CRM de clientes ---------- */
 .aviso-cli b svg{width:15px;height:15px;vertical-align:-3px;margin-right:4px}
+
+/* ---------- lavandería: estado de la ropa ---------- */
+.ropa-card{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:10px}
+.ropa-card .tx{flex:1;min-width:200px}
+.ropa-card .tx b{display:block;font-size:14px}
+.ropa-est{display:flex;gap:8px;flex-wrap:wrap}
+.ropa-btn{
+  border:1.5px solid var(--line);border-radius:999px;padding:9px 15px;
+  font-size:12.5px;font-weight:700;color:var(--muted);background:#fff;cursor:pointer;
+  transition:border-color var(--tr),background var(--tr),color var(--tr),transform var(--tr);
+}
+.ropa-btn:hover{transform:translateY(-1px);border-color:var(--sage)}
+.ropa-btn.on{color:#fff}
+.ropa-btn.on.vacio{background:#8a9083;border-color:#8a9083}
+.ropa-btn.on.enviada{background:#4a7fa5;border-color:#4a7fa5}
+.ropa-btn.on.proceso{background:var(--gold);border-color:var(--gold);color:#241d0c}
+.ropa-btn.on.lista{background:var(--ok);border-color:var(--ok)}
+@media (max-width:640px){.ropa-est{width:100%}.ropa-btn{flex:1;min-width:118px;padding:10px 8px}}

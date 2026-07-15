@@ -18,12 +18,15 @@ const rolDireccion = () => STATE.role === "direccion";
    ============================================================ */
 const NAV = {
   direccion: [
-    ["Operativa", [["dashboard", "Inicio", "home"], ["plan", "Planificación", "cal"], ["equipo", "Equipo en vivo", "pin"], ["fichajes", "Fichajes", "clock"], ["incidencias", "Incidencias", "alert"]]],
+    ["Operativa", [["dashboard", "Inicio", "home"], ["plan", "Planificación", "cal"], ["equipo", "Equipo en vivo", "pin"], ["fichajes", "Fichajes", "clock"], ["incidencias", "Incidencias", "alert"], ["ropa", "Lavandería", "broom"]]],
     ["Negocio", [["propiedades", "Propiedades", "house"], ["trabajadores", "Trabajadores", "id"], ["propietarios", "Propietarios", "users"], ["clientes", "Clientes", "chat"]]],
     ["Administración", [["informes", "Informes", "doc"], ["facturacion", "Facturación", "invoice"], ["ajustes", "Ajustes", "settings"]]],
   ],
   equipo: [
-    ["Mi trabajo", [["midia", "Mi día", "sun"], ["mishoras", "Mis horas", "clock"], ["misincidencias", "Incidencias", "alert"]]],
+    ["Mi trabajo", [["midia", "Mi día", "sun"], ["mishoras", "Mis horas", "clock"], ["misincidencias", "Incidencias", "alert"], ["ropa", "Lavandería", "broom"]]],
+  ],
+  lavanderia: [
+    ["Lavandería", [["ropa", "Estado de la ropa", "broom"]]],
   ],
   propietario: [
     ["Tu casa", [["ownerhome", "Mi propiedad", "house"], ["ownerresenas", "Reseñas", "star"], ["ownermejoras", "Mejoras", "chart"], ["ownerliq", "Liquidaciones", "euro"]]],
@@ -39,13 +42,13 @@ function renderNav() {
         ${id === "incidencias" && incAb && rolDireccion() ? `<span class="pill">${incAb}</span>` : ""}
       </button>`).join("")}`).join("");
   const nombre = DB.profile?.nombre || "Usuario";
-  const rolTxt = rolDireccion() ? "Dirección" : STATE.role === "propietario" ? "Propietario" : "Equipo";
+  const rolTxt = rolDireccion() ? "Dirección" : STATE.role === "propietario" ? "Propietario" : STATE.role === "lavanderia" ? "Lavandería" : "Equipo";
   $("#sb-user").innerHTML = `
     <span class="ava" style="background:${rolDireccion() || STATE.role === "propietario" ? "var(--gold)" : (miEmp()?.color || "#4f8a5c")}">${ini(nombre)}</span>
     <div style="flex:1"><div class="n">${esc(nombre)}</div><div class="r">${rolTxt}</div></div>`;
   $("#user-btn").textContent = ini(nombre);
   $("#user-drop-nombre").textContent = nombre;
-  $("#user-drop-rol").textContent = rolDireccion() ? "Dirección · acceso total" : STATE.role === "propietario" ? "Propietario · " + (misProps()[0]?.nombre || "") : "Equipo · " + (miEmp()?.rol_laboral || "");
+  $("#user-drop-rol").textContent = rolDireccion() ? "Dirección · acceso total" : STATE.role === "propietario" ? "Propietario · " + (misProps()[0]?.nombre || "") : STATE.role === "lavanderia" ? "Lavandería · estado de la ropa" : "Equipo · " + (miEmp()?.rol_laboral || "");
   $("#menu-ajustes").style.display = rolDireccion() ? "" : "none";
 }
 function go(route) {
@@ -55,7 +58,7 @@ function go(route) {
   rerender();
   window.scrollTo({ top: 0 });
 }
-const rutaInicio = () => rolDireccion() ? "dashboard" : STATE.role === "propietario" ? "ownerhome" : "midia";
+const rutaInicio = () => rolDireccion() ? "dashboard" : STATE.role === "propietario" ? "ownerhome" : STATE.role === "lavanderia" ? "ropa" : "midia";
 function rerender(keepFocus) {
   if (!STATE.role) return;
   const v = VIEWS[STATE.route] || VIEWS[rutaInicio()];
@@ -995,6 +998,20 @@ async function abrirIncidencia(id) {
     if (url) box.insertAdjacentHTML("beforeend", `<a href="${url}" target="_blank" rel="noopener"><img src="${url}" alt="foto incidencia"></a>`);
   }
   if (!(i.fotos || []).length) box.innerHTML = "";
+  if (rolDireccion()) cargarDocs(`incidencias-docs/${i.id}`, "#inc-docs");
+}
+/* lavandería */
+async function setRopaUI(propId, estado) {
+  const err = await dbSetRopa(propId, estado);
+  if (err) return toast("No se pudo actualizar", err, ICON.alert, "terra");
+  toast("Ropa de " + (P(propId)?.nombre || "la propiedad"), ROPA_ESTADOS[estado], ICON.check, "ok");
+  rerender();
+}
+async function regenLavUI() {
+  if (!confirm("¿Generar un código nuevo para la lavandería? El anterior dejará de funcionar.")) return;
+  const err = await dbRegenCodigoLav();
+  if (err) return toast("No se pudo", err, ICON.alert, "terra");
+  toast("Código regenerado", "Pásaselo a la lavandería.", ICON.check, "ok"); rerender();
 }
 async function comentarInc(id) {
   const txt = fval("inc-coment"); if (!txt) return;
@@ -1216,8 +1233,8 @@ async function aceptarMejorasSel() {
 /* ============================================================
    DOCUMENTOS (propiedades y trabajadores)
    ============================================================ */
-async function cargarDocs(prefix) {
-  const box = $("#docs-list"); if (!box) return;
+async function cargarDocs(prefix, sel = "#docs-list") {
+  const box = $(sel); if (!box) return;
   const docs = await dbListarDocumentos(prefix);
   if (!docs.length) { box.innerHTML = `<p class="hint">Sin documentos todavía. Sube aquí el contrato y demás papeles: quedan guardados en la nube.</p>`; return; }
   box.innerHTML = docs.map(d => `
@@ -1230,12 +1247,12 @@ async function abrirDoc(path) {
   const url = await fotoUrl(path);
   if (url) window.open(url, "_blank", "noopener");
 }
-async function subirDoc(prefix, input) {
+async function subirDoc(prefix, input, sel = "#docs-list") {
   const f = input.files[0]; if (!f) return;
   const err = await dbSubirDocumento(prefix, f);
   if (err) return toast("No se pudo subir", err, ICON.alert, "terra");
   toast("Documento subido", f.name, ICON.check, "ok");
-  cargarDocs(prefix);
+  cargarDocs(prefix, sel);
 }
 
 /* ============================================================

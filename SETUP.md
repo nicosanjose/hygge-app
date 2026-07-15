@@ -52,6 +52,7 @@ Esto crea: tablas (propiedades con servicios contratados, reservas, tareas con f
 5. **Calendario de cada propiedad** → reservas (con importe si quieres liquidaciones automáticas).
 6. **Clientes** → tu agenda de huéspedes: contacto, notas y sus estancias (puedes vincular reservas ya creadas). Los botones de WhatsApp/Email abren la conversación y dejan apuntado cuándo y cómo fue el último contacto — la clave para que el inquilino de este verano repita el que viene. Solo lo ve dirección.
 7. **Planificación** → los servicios del día y su equipo.
+8. **Lavandería** → en Ajustes → Usuarios está el **código de acceso de la lavandería**: con él crean su cuenta y solo ven una pantalla para marcar el estado de la ropa de cada propiedad (sin ropa / enviada / en proceso / lista para recoger). La oficina y el equipo lo ven al momento en su pestaña Lavandería. En cada **incidencia**, dirección puede además adjuntar documentos (contratos de autónomos, presupuestos, facturas de la reparación) que solo ve dirección.
 
 ## Dónde está desplegado
 

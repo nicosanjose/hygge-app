@@ -167,6 +167,8 @@ function viewDashboard() {
   entradas.filter(r => !tHoy.some(t => t.propiedad_id === r.propiedad_id && t.tipo === "limpieza")).slice(0, 2).forEach(r =>
     avisos.push({ ic: "blue", icon: ICON.cal, b: `Entrada hoy sin limpieza planificada`, s: esc(P(r.propiedad_id)?.nombre || ""), go: "plan" }));
   if (DB.pendientes.length) avisos.push({ ic: "lilac", icon: ICON.users, b: `${DB.pendientes.length} cuenta(s) pendiente(s) de activar`, s: "Revisa Ajustes → Usuarios", go: "ajustes" });
+  DB.lavanderia.filter(l => l.estado === "lista").forEach(l =>
+    avisos.push({ ic: "blue", icon: ICON.broom, b: "Ropa lista para recoger", s: esc(P(l.propiedad_id)?.nombre || ""), go: "ropa" }));
   const inj30 = DB.ausencias.filter(a => a.tipo === "injustificada" && a.fecha >= addDias(hoyISO(), -30));
   const porRevisar = DB.emp.filter(e => e.activo).reduce((a, e) => a + diasSinFichar(e.id, addDias(hoyISO(), -30)).length, 0);
   if (inj30.length) avisos.push({ ic: "terra", icon: ICON.alert, b: `${inj30.length} ausencia${inj30.length > 1 ? "s" : ""} sin justificar · 30 días`, s: [...new Set(inj30.map(a => S(a.empleado_id)?.nombre.split(" ")[0]))].filter(Boolean).join(", "), go: "trabajadores" });
@@ -1019,6 +1021,11 @@ function drawerIncidencia(i) {
       ${rep ? `<span class="chip sage">${esc(rep.nombre)}</span>` : ""}
     </div>
     <div class="thumbs" id="inc-fotos">${(i.fotos || []).map(() => `<div class="lds" style="width:74px;height:74px;border-radius:10px"></div>`).join("")}</div>
+    ${rolDireccion() ? `
+    <h4 style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:16px 0 10px">Documentos</h4>
+    <div id="inc-docs"><div class="lds"></div></div>
+    <label class="file-btn" style="margin-top:10px">${ICON.plus} Adjuntar documento<input type="file" onchange="subirDoc('incidencias-docs/${i.id}', this, '#inc-docs')"></label>
+    <p class="hint" style="margin-top:6px">Contratos, presupuestos o facturas de la reparación · solo los ve dirección.</p>` : ""}
     <h4 style="font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:16px 0 12px">Historial</h4>
     <div class="tl">${evs.map(t => `<div class="tl-item"><b>${esc(t.texto)}</b><span>${fmtCorto(t.created_at.slice(0, 10))} · ${fmtHora(t.created_at)}${t.autor ? " · " + esc(t.autor) : ""}</span></div>`).join("") || '<p class="hint">Sin movimientos.</p>'}</div>
     <div style="display:flex;gap:8px;margin-top:16px">
@@ -1735,6 +1742,12 @@ function viewAjustes() {
         : `<p class="hint" style="margin-bottom:10px">No hay cuentas pendientes.</p>`}
         <div class="set-row"><div class="tx"><b>Códigos de equipo activos</b>
           <span>${sinCuenta.length ? sinCuenta.map(e => esc(e.nombre.split(" ")[0]) + " (" + esc(e.codigo_acceso) + ")").join(" · ") : "todos los empleados tienen cuenta o no hay códigos"}</span></div></div>
+        <div class="set-row"><div class="tx"><b>Acceso de la lavandería</b>
+          <span>con este código la lavandería crea su cuenta: solo ve y actualiza el estado de la ropa</span></div>
+          <div class="end">${DB.lavAcceso ? `
+            <button class="code-chip" onclick="copiar('${esc(DB.lavAcceso.codigo_acceso)}')">${esc(DB.lavAcceso.codigo_acceso)} ${ICON.copy}</button>
+            <button class="btn xs outline" title="Generar código nuevo" onclick="regenLavUI()">↻</button>`
+          : '<span class="hint">activa esta función ejecutando el schema actualizado</span>'}</div></div>
       </div>
     </div>
     <div class="card"><div class="card-head"><h3>Checklist de limpieza</h3><span class="sub">plantilla que se copia a cada nuevo servicio</span></div>
@@ -1761,6 +1774,35 @@ function viewAjustes() {
         <div class="end"><span class="chip ok">Incluidas</span></div></div>
     </div>
   </div>`;
+}
+
+/* ============================================================
+   LAVANDERÍA · estado de la ropa por propiedad
+   ============================================================ */
+function viewRopa() {
+  const orden = { lista: 0, proceso: 1, enviada: 2, vacio: 3 };
+  const props = DB.props.filter(p => p.activa)
+    .sort((a, b) => orden[ropaDe(a.id).estado] - orden[ropaDe(b.id).estado] || a.nombre.localeCompare(b.nombre));
+  if (!props.length) return vacio(ICON.broom, "Sin propiedades activas",
+    "Cuando haya propiedades, aquí se controla en qué estado está la ropa de cada una.");
+  const fuera = props.filter(p => ropaDe(p.id).estado !== "vacio").length;
+  const listas = props.filter(p => ropaDe(p.id).estado === "lista").length;
+  return `
+  <div class="kpis" style="margin-bottom:16px">
+    <div class="kpi"><div class="lab">${ICON.broom} Ropa fuera</div><div class="val">${fuera}</div><div class="sub">propiedades con ropa en la lavandería</div></div>
+    <div class="kpi"><div class="lab">${ICON.check} Lista para recoger</div><div class="val">${listas}</div><div class="sub">${listas ? "pásate a por ella" : "nada pendiente de recoger"}</div></div>
+  </div>
+  <div class="toolbar"><span class="hint">${STATE.role === "lavanderia"
+    ? "Toca el estado de la ropa de cada propiedad: la oficina y el equipo lo ven al momento."
+    : "Estado en tiempo real por propiedad · lo actualiza la propia lavandería desde su acceso (y también podéis tocarlo aquí, p. ej. al recogerla)."}</span></div>
+  ${props.map(p => { const r = ropaDe(p.id); return `
+  <div class="card ropa-card">
+    <div class="tx"><b>Ropa de ${esc(p.nombre)}</b>
+      <span class="hint">${esc(p.zona || "")}${r.estado !== "vacio" && r.updated_at ? ` · ${haceTxt(r.updated_at)}${r.updated_by ? " por " + esc(r.updated_by) : ""}` : ""}</span></div>
+    <div class="ropa-est">${Object.entries(ROPA_ESTADOS).map(([k, txt]) => `
+      <button class="ropa-btn ${k} ${r.estado === k ? "on" : ""}" onclick="setRopaUI(${p.id},'${k}')">${txt}</button>`).join("")}
+    </div>
+  </div>`; }).join("")}`;
 }
 
 /* ============================================================
@@ -1822,6 +1864,12 @@ function viewMiDia() {
       <div class="card"><div class="card-head"><h3>Mi semana</h3></div>
         <div class="chart-box" style="height:150px"><canvas id="chart-emp"></canvas></div>
         <p class="hint" style="margin-top:8px">Horas fichadas por día (pausas descontadas).</p></div>
+      ${DB.lavanderia.some(l => l.estado !== "vacio") ? `
+      <div class="card"><div class="card-head"><h3>Ropa en lavandería</h3><div class="right"><button class="btn xs outline" data-go="ropa">${ICON.eye} Ver</button></div></div>
+        ${DB.lavanderia.filter(l => l.estado !== "vacio").map(l => `
+          <div class="set-row"><div class="tx"><b>${esc(P(l.propiedad_id)?.nombre || "")}</b><span>${haceTxt(l.updated_at)}</span></div>
+          <div class="end"><span class="chip ${l.estado === "lista" ? "ok" : l.estado === "proceso" ? "gold" : "blue"}">${ROPA_ESTADOS[l.estado]}</span></div></div>`).join("")}
+      </div>` : ""}
       <div class="card"><div class="card-head"><h3>Mi posición</h3></div>
         <p class="hint" style="margin-bottom:12px">La oficina ve tu posición en el mapa solo mientras tienes la jornada abierta.</p>
         <button class="btn sm outline" onclick="actualizarPosicionUI()">${ICON.gps} Actualizar mi posición</button></div>
@@ -1887,6 +1935,7 @@ const VIEWS = {
   propietarios: { t: "Propietarios",  c: "Dueños, reseñas y mejoras",          r: viewPropietarios,  m: () => {} },
   propietariodetail: { t: "Propietario", c: "Propiedades, reseñas y mejoras",   r: viewPropietarioDetail, m: () => {} },
   clientes:     { t: "Clientes",      c: "Huéspedes y recurrencia",            r: viewClientes,      m: () => {} },
+  ropa:         { t: "Lavandería",    c: "Estado de la ropa por propiedad",    r: viewRopa,          m: () => {} },
   clientedetail:{ t: "Cliente",       c: "Ficha, comunicación y estancias",    r: viewClienteDetail, m: () => {} },
   ajustes:      { t: "Ajustes",       c: "Empresa, usuarios y plantillas",     r: viewAjustes,       m: () => {} },
   midia:        { t: "Mi día",        c: "Fichaje, tareas e incidencias",      r: viewMiDia,         m: () => mountMiDia() },

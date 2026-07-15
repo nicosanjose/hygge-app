@@ -55,7 +55,7 @@ create table if not exists propietarios (
 alter table propietarios add column if not exists codigo_acceso text unique default substr(md5(random()::text), 1, 8);
 alter table profiles add column if not exists propietario_id bigint references propietarios(id) on delete set null;
 alter table profiles drop constraint if exists profiles_rol_check;
-alter table profiles add constraint profiles_rol_check check (rol in ('direccion','equipo','propietario'));
+alter table profiles add constraint profiles_rol_check check (rol in ('direccion','equipo','propietario','lavanderia'));
 
 create table if not exists propiedades (
   id              bigint generated always as identity primary key,
@@ -288,6 +288,11 @@ language sql stable security definer set search_path = public as $$
   select propietario_id from profiles where id = auth.uid();
 $$;
 
+create or replace function is_lavanderia() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from profiles where id = auth.uid() and rol = 'lavanderia');
+$$;
+
 -- perfil automático al registrarse
 create or replace function handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -334,6 +339,14 @@ begin
         nombre = coalesce(nombre, (select nombre from propietarios where id = v_emp))
         where id = auth.uid();
       return 'propietario';
+    end if;
+    -- ¿es el código de la lavandería? (un solo uso: al canjearse se regenera)
+    if exists (select 1 from lavanderia_acceso where codigo_acceso = lower(trim(p_codigo))) then
+      update profiles set rol = 'lavanderia',
+        nombre = coalesce(nombre, (select nombre from lavanderia_acceso limit 1), 'Lavandería')
+        where id = auth.uid();
+      update lavanderia_acceso set codigo_acceso = 'lv' || substr(md5(random()::text), 1, 6);
+      return 'lavanderia';
     end if;
     raise exception 'Código no válido o ya utilizado';
   end if;
@@ -419,7 +432,7 @@ create policy propietarios_self on propietarios for select to authenticated
 -- propiedades: dirección y equipo ven todas; el propietario, solo las suyas
 drop policy if exists propiedades_select on propiedades;
 create policy propiedades_select on propiedades for select to authenticated
-  using (is_direccion() or my_emp() is not null or propietario_id = my_owner());
+  using (is_direccion() or my_emp() is not null or propietario_id = my_owner() or is_lavanderia());
 drop policy if exists propiedades_write on propiedades;
 create policy propiedades_write on propiedades for all to authenticated
   using (is_direccion()) with check (is_direccion());
@@ -572,7 +585,7 @@ drop policy if exists fotos_select on storage.objects;
 create policy fotos_select on storage.objects for select to authenticated
   using (bucket_id = 'fotos' and (
     is_direccion()
-    or (storage.foldername(name))[1] not in ('documentos','empleados','fichajes','ausencias')
+    or (storage.foldername(name))[1] not in ('documentos','empleados','fichajes','ausencias','incidencias-docs')
     -- cada trabajador puede leer SUS fotos de fichaje (necesario también para subirlas)
     or ((storage.foldername(name))[1] = 'fichajes' and (storage.foldername(name))[2] = my_emp()::text)
   ));
@@ -612,6 +625,36 @@ create table if not exists cliente_contactos (
 alter table reservas add column if not exists cliente_id bigint references clientes(id) on delete set null;
 create index if not exists idx_reservas_cliente on reservas (cliente_id);
 create index if not exists idx_clicontactos on cliente_contactos (cliente_id, fecha);
+
+-- ---------- LAVANDERÍA (estado de la ropa por propiedad + acceso propio) ----------
+
+create table if not exists lavanderia (
+  propiedad_id bigint primary key references propiedades(id) on delete cascade,
+  estado       text not null default 'vacio' check (estado in ('vacio','enviada','proceso','lista')),
+  updated_at   timestamptz not null default now(),
+  updated_by   text
+);
+-- fila única con el código de acceso de la lavandería (visible solo para dirección; el RPC lo lee como security definer)
+create table if not exists lavanderia_acceso (
+  unico         boolean primary key default true check (unico),
+  nombre        text not null default 'Lavandería',
+  codigo_acceso text not null default 'lv' || substr(md5(random()::text), 1, 6)
+);
+insert into lavanderia_acceso (unico) values (true) on conflict (unico) do nothing;
+
+alter table lavanderia enable row level security;
+alter table lavanderia_acceso enable row level security;
+drop policy if exists lavanderia_select on lavanderia;
+create policy lavanderia_select on lavanderia for select to authenticated
+  using (is_direccion() or my_emp() is not null or is_lavanderia());
+drop policy if exists lavanderia_write on lavanderia;
+create policy lavanderia_write on lavanderia for all to authenticated
+  using (is_direccion() or my_emp() is not null or is_lavanderia())
+  with check (is_direccion() or my_emp() is not null or is_lavanderia());
+drop policy if exists lavacceso_all on lavanderia_acceso;
+create policy lavacceso_all on lavanderia_acceso for all to authenticated
+  using (is_direccion()) with check (is_direccion());
+do $$ begin alter publication supabase_realtime add table lavanderia; exception when duplicate_object then null; end $$;
 
 -- el CRM es del negocio: solo dirección
 alter table clientes enable row level security;
