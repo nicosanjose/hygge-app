@@ -329,6 +329,33 @@ const openPaperLiquidaciones = mes => paperModal(paperLiquidaciones(mes), "Liqui
 const openPaperFichajes = fecha => paperModal(paperFichajesDia(fecha), "Registro de jornada · " + fmtCorto(fecha));
 const openFacturaPaper = id => { const f = DB.facturas.find(x => x.id === id); if (f) paperModal(paperFactura(f), f.numero ? "Factura " + f.numero : "Borrador"); };
 const openPaperLiqOwner = (oid, mes) => { const o = O(oid); if (o) paperModal(paperLiqOwner(o, mes), "Liquidación · " + esc(o.nombre)); };
+const openPaperHorario = id => { const e = S(id); if (e) paperModal(paperHorario(id), "Horario · " + esc(e.nombre.split(" ")[0])); };
+const openPaperCuadrante = fecha => paperModal(paperCuadrante(fecha), "Cuadrante del equipo · 3 semanas");
+/* horario → Excel (CSV que abre directo en Excel): individual (empId) o global (null) */
+function exportHorarioCSV(empId, desde) {
+  const ini = desde || hoyISO();
+  const dias = Array.from({ length: 21 }, (_, i) => addDias(ini, i));
+  const rows = [["Fecha", "Día", "Trabajador", "Propiedad", "Zona", "Servicio", "Inicio", "Fin", "Horas previstas", "Nota"]];
+  dias.forEach(d => {
+    const diaTxt = new Date(d + "T12:00").toLocaleDateString("es-ES", { weekday: "long" });
+    DB.tareas.filter(t => t.fecha === d && (!empId || (t.equipo_ids || []).includes(empId)))
+      .sort((a, b) => (a.hora_inicio || "").localeCompare(b.hora_inicio || ""))
+      .forEach(t => {
+        const p = P(t.propiedad_id) || {};
+        const quien = empId ? [empId] : ((t.equipo_ids || []).length ? t.equipo_ids : [null]);
+        quien.forEach(eid => rows.push([d, diaTxt, eid ? (S(eid)?.nombre || "") : "SIN ASIGNAR",
+          p.nombre || "", p.zona || "", t.tipo, (t.hora_inicio || "").slice(0, 5), (t.hora_fin || "").slice(0, 5),
+          String(Math.round(horasTarea(t) * 10) / 10).replace(".", ","), t.descripcion || ""]));
+      });
+  });
+  if (rows.length === 1) return toast("Nada que exportar", "No hay servicios planificados en esas 3 semanas.", ICON.alert, "terra");
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `horario-${empId ? (S(empId)?.nombre.split(" ")[0] || "trabajador").toLowerCase() : "equipo"}-${ini}.csv`;
+  a.click();
+  toast("Horario exportado", a.download + " · ábrelo con Excel", ICON.down, "ok");
+}
 function exportFichajesCSV(fecha) {
   const rows = [["Empleado", "Puesto", "Fecha", "Entrada", "Salida", "Pausas", "Horas", "Lat", "Lng"]];
   DB.fichajes.filter(f => f.fecha === fecha).forEach(f => {
@@ -642,9 +669,9 @@ function openTareaForm(fecha, propId, tareaId, empId) {
         <div class="tag-multi" id="tf-equipo">${DB.emp.filter(e => e.activo).map(e => `<span class="tg ${(t.equipo_ids || []).includes(e.id) ? "on" : ""}" data-id="${e.id}" onclick="this.classList.toggle('on')">${esc(e.nombre.split(" ")[0])}</span>`).join("") || '<span class="hint">Da de alta al equipo primero.</span>'}</div></div>
       <div class="f-field full"><label>Nota</label><input id="tf-desc" value="${esc(t.descripcion || "")}" placeholder="Ej. check-out → check-in 16:00"></div>
       ${!tareaId ? `
-      <div class="f-field"><label>Repetir (revisiones periódicas)</label>
-        <select id="tf-repetir"><option value="0">No repetir</option><option value="7">Cada semana</option><option value="14">Cada 2 semanas</option><option value="30">Cada mes</option></select></div>
-      <div class="f-field"><label>Nº de repeticiones</label><input id="tf-veces" type="number" min="2" max="26" value="8"></div>` : ""}
+      <div class="f-field"><label>Repetir</label>
+        <select id="tf-repetir"><option value="0">No repetir</option><option value="1">Cada día (X días seguidos)</option><option value="7">Cada semana</option><option value="14">Cada 2 semanas</option><option value="30">Cada mes</option></select></div>
+      <div class="f-field"><label>¿Cuántos días / veces?</label><input id="tf-veces" type="number" min="2" max="26" value="7"></div>` : ""}
     </div></div>
     <div class="modal-foot">
       <button class="btn outline" onclick="closeModal()">Cancelar</button>
@@ -669,7 +696,7 @@ async function guardarTarea(id) {
   }
   closeModal();
   toast(veces > 1 ? `${veces} servicios planificados` : "Servicio planificado",
-    (P(payload.propiedad_id)?.nombre || "") + (veces > 1 ? ` · cada ${cada === 7 ? "semana" : cada === 14 ? "2 semanas" : "mes"}` : ""), ICON.check, "ok");
+    (P(payload.propiedad_id)?.nombre || "") + (veces > 1 ? (cada === 1 ? ` · ${veces} días seguidos` : ` · cada ${cada === 7 ? "semana" : cada === 14 ? "2 semanas" : "mes"}`) : ""), ICON.check, "ok");
   rerender();
 }
 /* copiar la planificación de una semana a otra (el cuadrante base se repite y solo se retoca) */
