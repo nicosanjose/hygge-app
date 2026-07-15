@@ -981,3 +981,42 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 .ropa-btn.on.proceso{background:var(--gold);border-color:var(--gold);color:#241d0c}
 .ropa-btn.on.lista{background:var(--ok);border-color:var(--ok)}
 @media (max-width:640px){.ropa-est{width:100%}.ropa-btn{flex:1;min-width:118px;padding:10px 8px}}
+
+/* ---------- planificación: cuadrante 3 semanas ---------- */
+.tbl.cq th,.tbl.cq td{border-right:1px solid var(--line-2)}
+.tbl.cq .cq-fix{position:sticky;left:0;background:var(--card);z-index:2;min-width:168px;box-shadow:2px 0 0 var(--line)}
+.tbl.cq thead .cq-fix{z-index:3;background:#faf9f4}
+.tbl.cq th.hoy,.tbl.cq td.hoy{background:rgba(199,156,61,.08)}
+.tbl.cq th.wk,.tbl.cq td.wk{border-left:2.5px solid #cfd3c7}
+.cq-h{display:block;font-size:10.5px;color:var(--muted);margin-top:3px;padding-left:2px}
+.cq-cell{min-width:97px;vertical-align:top;position:relative;padding:6px 5px}
+.cq-add{
+  display:block;width:100%;border:1.5px dashed transparent;border-radius:8px;color:var(--muted);
+  font-size:13px;font-weight:700;padding:2px 0;opacity:0;cursor:pointer;transition:opacity var(--tr),border-color var(--tr);
+}
+.cq-cell:hover .cq-add{opacity:.9;border-color:var(--gold-line)}
+@media (max-width:980px){.cq-add{opacity:.35;border-color:var(--line-2)}}
+.week-chip.t-limpieza{border-left:3px solid var(--sage)}
+.week-chip.t-mantenimiento{border-left:3px solid var(--terra)}
+.week-chip.t-piscina{border-left:3px solid var(--blue)}
+.week-chip.t-otro{border-left:3px solid var(--gray)}
+
+/* ---------- mi horario (equipo, 3 semanas) ---------- */
+.mh-dia{display:flex;gap:14px;padding:9px 0;border-top:1px solid var(--line-2);align-items:flex-start}
+.mh-dia:first-of-type{border-top:none}
+.mh-dia.libre{opacity:.5}
+.mh-fecha{width:46px;flex:none;text-align:center;border-radius:10px;padding:5px 0;background:var(--paper)}
+.mh-fecha b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.mh-fecha span{font-size:16.5px;font-weight:700}
+.mh-dia.hoy .mh-fecha{background:var(--gold-soft);border:1px solid var(--gold-line)}
+.mh-dia.hoy .mh-fecha b{color:var(--gold-deep)}
+.mh-tareas{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.mh-tarea{display:flex;gap:12px;align-items:baseline;background:var(--paper);border-radius:10px;padding:8px 12px;border-left:3px solid var(--sage)}
+.mh-tarea.t-mantenimiento{border-left-color:var(--terra)}
+.mh-tarea.t-piscina{border-left-color:var(--blue)}
+.mh-tarea.t-otro{border-left-color:var(--gray)}
+.mh-tarea .hr{flex:none;font-size:13px}
+.mh-tarea .tx{min-width:0}
+.mh-tarea .tx b{font-size:13.5px}
+.mh-tarea .tx span{display:block;font-size:12px;color:var(--muted)}
+.mh-libre{font-size:12px;color:var(--muted);padding:8px 2px;display:inline-block}

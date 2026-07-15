@@ -23,7 +23,7 @@ const NAV = {
     ["Administración", [["informes", "Informes", "doc"], ["facturacion", "Facturación", "invoice"], ["ajustes", "Ajustes", "settings"]]],
   ],
   equipo: [
-    ["Mi trabajo", [["midia", "Mi día", "sun"], ["mishoras", "Mis horas", "clock"], ["misincidencias", "Incidencias", "alert"], ["ropa", "Lavandería", "broom"]]],
+    ["Mi trabajo", [["midia", "Mi día", "sun"], ["mihorario", "Mi horario", "cal"], ["mishoras", "Mis horas", "clock"], ["misincidencias", "Incidencias", "alert"], ["ropa", "Lavandería", "broom"]]],
   ],
   lavanderia: [
     ["Lavandería", [["ropa", "Estado de la ropa", "broom"]]],
@@ -626,8 +626,8 @@ async function guardarEmpleado(id) {
 /* ============================================================
    TAREAS (planificación + flujo empleado)
    ============================================================ */
-function openTareaForm(fecha, propId, tareaId) {
-  const t = tareaId ? DB.tareas.find(x => x.id === tareaId) : {};
+function openTareaForm(fecha, propId, tareaId, empId) {
+  const t = tareaId ? DB.tareas.find(x => x.id === tareaId) : { equipo_ids: empId ? [empId] : undefined };
   openModal(`
     <div class="modal-head"><h3>${tareaId ? "Editar servicio" : "Nuevo servicio"}</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
     <div class="modal-body"><div class="form-grid">
@@ -671,6 +671,44 @@ async function guardarTarea(id) {
   toast(veces > 1 ? `${veces} servicios planificados` : "Servicio planificado",
     (P(payload.propiedad_id)?.nombre || "") + (veces > 1 ? ` · cada ${cada === 7 ? "semana" : cada === 14 ? "2 semanas" : "mes"}` : ""), ICON.check, "ok");
   rerender();
+}
+/* copiar la planificación de una semana a otra (el cuadrante base se repite y solo se retoca) */
+function openCopiarSemana(fecha) {
+  const lunes = addDias(fecha, -((new Date(fecha + "T12:00").getDay() + 6) % 7));
+  openModal(`
+    <div class="modal-head"><h3>Copiar semana de planificación</h3><button class="x" onclick="closeModal()">${ICON.x}</button></div>
+    <div class="modal-body"><div class="form-grid">
+      <div class="f-field"><label>Copiar la semana del…</label><input id="cs-origen" type="date" value="${addDias(lunes, -7)}"></div>
+      <div class="f-field"><label>…a la semana del</label><input id="cs-destino" type="date" value="${lunes}"></div>
+    </div>
+    <p class="form-note">Copia todos los servicios de la semana de origen (propiedad, horario y equipo) al mismo día de la semana de destino, como pendientes. Si en el destino ya existe un servicio idéntico, se salta — puedes copiarla varias veces sin duplicar.</p></div>
+    <div class="modal-foot">
+      <button class="btn outline" onclick="closeModal()">Cancelar</button>
+      <button class="btn primary" id="cs-go" onclick="doCopiarSemana()">${ICON.copy} Copiar semana</button>
+    </div>`);
+}
+async function doCopiarSemana() {
+  const norm = f => addDias(f, -((new Date(f + "T12:00").getDay() + 6) % 7));
+  const o = fval("cs-origen"), de = fval("cs-destino");
+  if (!o || !de) return;
+  const lo = norm(o), ld = norm(de);
+  if (lo === ld) return toast("Elige dos semanas distintas", "", ICON.alert, "terra");
+  const origen = DB.tareas.filter(t => t.fecha >= lo && t.fecha <= addDias(lo, 6));
+  if (!origen.length) return toast("La semana de origen está vacía", "No hay servicios que copiar.", ICON.alert, "terra");
+  const btn = $("#cs-go"); btn.disabled = true; btn.textContent = "Copiando…";
+  let n = 0, saltados = 0;
+  for (const t of origen) {
+    const offset = Math.round((new Date(t.fecha + "T12:00") - new Date(lo + "T12:00")) / 864e5);
+    const fecha = addDias(ld, offset);
+    if (DB.tareas.some(x => x.fecha === fecha && x.propiedad_id === t.propiedad_id && x.tipo === t.tipo && x.hora_inicio === t.hora_inicio)) { saltados++; continue; }
+    const err = await dbCrearTarea({ propiedad_id: t.propiedad_id, fecha, tipo: t.tipo, hora_inicio: t.hora_inicio, hora_fin: t.hora_fin, equipo_ids: t.equipo_ids || [], descripcion: t.descripcion || null });
+    if (err) { btn.disabled = false; btn.textContent = "Copiar semana"; return toast("Error al copiar", err, ICON.alert, "terra"); }
+    n++;
+  }
+  closeModal();
+  toast(n ? `${n} servicio${n === 1 ? "" : "s"} copiado${n === 1 ? "" : "s"}` : "Nada que copiar",
+    `a la semana del ${fmtCorto(ld)}${saltados ? ` · ${saltados} ya existía${saltados === 1 ? "" : "n"}` : ""}`, ICON.check, n ? "ok" : "");
+  STATE.planDia = ld; rerender();
 }
 async function delTarea(id) {
   if (!confirm("¿Eliminar este servicio?")) return;

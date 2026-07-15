@@ -863,6 +863,34 @@ function viewPlanSemana(fecha) {
   <p class="hint" style="margin-top:10px">Toca un servicio para editarlo o reasignarlo. ${sinAsignar ? "Los de la fila roja no tienen equipo todavía." : ""}</p>`;
 }
 
+/* cuadrante de 3 semanas: filas = trabajadores, columnas = 21 días */
+function viewPlanCuadrante(fecha) {
+  const lunes = addDias(fecha, -((new Date(fecha + "T12:00").getDay() + 6) % 7));
+  const dias = Array.from({ length: 21 }, (_, i) => addDias(lunes, i));
+  const activos = DB.emp.filter(e => e.activo);
+  const tareasDe = (empId, dia) => DB.tareas.filter(t => t.fecha === dia && (empId ? (t.equipo_ids || []).includes(empId) : !(t.equipo_ids || []).length));
+  const chip = t => `<button class="week-chip t-${t.tipo} ${t.estado}" onclick="event.stopPropagation();openTareaForm('${t.fecha}',null,${t.id})"
+    title="${esc(P(t.propiedad_id)?.nombre || "")} · ${t.tipo} · ${(t.hora_inicio || "").slice(0, 5)}–${(t.hora_fin || "").slice(0, 5)}">
+    ${(t.hora_inicio || "").slice(0, 5)} ${esc((P(t.propiedad_id)?.nombre || "").replace(/^(Villa|Finca|Casa|Xalet|Apartament|Àtic)\s+/i, ""))}</button>`;
+  const horasSem = (empId, w) => Math.round(dias.slice(w * 7, w * 7 + 7).reduce((a, d) => a + tareasDe(empId, d).reduce((x, t) => x + horasTarea(t), 0), 0));
+  const clase = d => `${d === hoyISO() ? "hoy" : ""} ${((new Date(d + "T12:00").getDay() + 6) % 7) === 0 ? "wk" : ""}`;
+  const celda = (empId, d) => `<td class="cq-cell ${clase(d)}">
+    ${tareasDe(empId, d).map(chip).join("")}<button class="cq-add" title="Asignar servicio este día" onclick="openTareaForm('${d}',null,null,${empId || "null"})">+</button></td>`;
+  const sinAsignar = dias.some(d => tareasDe(null, d).length);
+  return `
+  <div class="tbl-wrap"><table class="tbl week cq" style="min-width:2300px">
+    <thead><tr><th class="cq-fix">Trabajador</th>${dias.map(d => `
+      <th class="${clase(d)}">${new Date(d + "T12:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })}</th>`).join("")}</tr></thead>
+    <tbody>
+      ${activos.map(e => `<tr><td class="cq-fix"><span class="who">${ava(e)} ${esc(e.nombre.split(" ")[0])}</span>
+          <span class="cq-h">${[0, 1, 2].map(w => horasSem(e.id, w)).join(" · ")} h/sem</span></td>
+        ${dias.map(d => celda(e.id, d)).join("")}</tr>`).join("")}
+      ${sinAsignar ? `<tr><td class="cq-fix"><span class="who" style="color:var(--terra)">${ICON.alert} Sin asignar</span></td>
+        ${dias.map(d => celda(null, d)).join("")}</tr>` : ""}
+    </tbody></table></div>
+  <p class="hint" style="margin-top:10px">Las próximas 3 semanas de un vistazo (desplaza hacia los lados). Toca un servicio para editarlo, o el <b>+</b> de cualquier casilla para asignar a esa persona ese día. Columna dorada = hoy · línea marcada = cambio de semana · bajo cada nombre, sus horas previstas por semana. Con <b>Copiar semana</b> repites el cuadrante base en segundos y solo retocas los cambios.</p>`;
+}
+
 function viewPlan() {
   const fecha = STATE.planDia || hoyISO();
   const vista = STATE.planVista || "dia";
@@ -871,22 +899,26 @@ function viewPlan() {
   const tareas = DB.tareas.filter(t => t.fecha === fecha).sort((a, b) => (a.hora_inicio || "").localeCompare(b.hora_inicio || ""));
   const stChip = { hecha: '<span class="chip ok">Hecha</span>', encurso: '<span class="chip blue"><i class="d"></i>En curso</span>', pendiente: '<span class="chip line">Pendiente</span>' };
   if (!DB.props.length) return vacio(ICON.cal, "Primero añade propiedades", "La planificación se construye sobre las reservas y servicios de tus propiedades.", `<button class="btn primary" data-go="propiedades">${ICON.house} Ir a Propiedades</button>`);
-  const salto = vista === "semana" ? 7 : 1;
+  const salto = vista === "dia" ? 1 : 7;
+  const lunesSel = addDias(fecha, -((new Date(fecha + "T12:00").getDay() + 6) % 7));
   const barra = `
   <div class="toolbar">
     <div class="seg">
       <button class="${vista === "dia" ? "on" : ""}" onclick="STATE.planVista='dia';rerender()">Día</button>
       <button class="${vista === "semana" ? "on" : ""}" onclick="STATE.planVista='semana';rerender()">Semana</button>
+      <button class="${vista === "cuadrante" ? "on" : ""}" onclick="STATE.planVista='cuadrante';rerender()">3 semanas</button>
     </div>
     <span class="month-nav">
       <button onclick="STATE.planDia='${addDias(fecha, -salto)}';rerender()">${ICON.left}</button>
-      <b>${vista === "semana" ? "Semana del " + fmtCorto(addDias(fecha, -((new Date(fecha + "T12:00").getDay() + 6) % 7))) : (fecha === hoyISO() ? "Hoy · " : "") + fmtCorto(fecha)}</b>
+      <b>${vista === "cuadrante" ? "3 semanas desde el " + fmtCorto(lunesSel) : vista === "semana" ? "Semana del " + fmtCorto(lunesSel) : (fecha === hoyISO() ? "Hoy · " : "") + fmtCorto(fecha)}</b>
       <button onclick="STATE.planDia='${addDias(fecha, salto)}';rerender()">${ICON.right}</button>
     </span>
     ${fecha !== hoyISO() ? `<button class="btn xs outline" onclick="STATE.planDia='${hoyISO()}';rerender()">Volver a hoy</button>` : ""}
     <div class="spacer"></div>
+    ${vista !== "dia" ? `<button class="btn sm outline" onclick="openCopiarSemana('${fecha}')">${ICON.copy} Copiar semana</button>` : ""}
     <button class="btn sm primary" onclick="openTareaForm('${fecha}')">${ICON.plus} Nuevo servicio</button>
   </div>`;
+  if (vista === "cuadrante") return barra + viewPlanCuadrante(fecha);
   if (vista === "semana") return barra + viewPlanSemana(fecha);
   return barra + `
   <div class="plan-cols">
@@ -1887,6 +1919,49 @@ function mountMiDia() {
   drawBars("chart-emp", data, { hi: (new Date().getDay() + 6) % 7 });
   startEmpTimer();
 }
+/* mi horario: las próximas 3 semanas del trabajador */
+function viewMiHorario() {
+  const me = miEmp();
+  if (!me) return vacio(ICON.users, "Cuenta sin ficha de empleado",
+    "Tu cuenta está activa pero no está vinculada a una ficha. Pide a la oficina tu código de equipo.");
+  const dias = Array.from({ length: 21 }, (_, i) => addDias(hoyISO(), i));
+  const misT = d => DB.tareas.filter(t => t.fecha === d && (t.equipo_ids || []).includes(me.id))
+    .sort((a, b) => (a.hora_inicio || "").localeCompare(b.hora_inicio || ""));
+  const semanas = [];
+  dias.forEach(d => {
+    const lunes = addDias(d, -((new Date(d + "T12:00").getDay() + 6) % 7));
+    let s = semanas.find(x => x.lunes === lunes);
+    if (!s) { s = { lunes, dias: [] }; semanas.push(s); }
+    s.dias.push(d);
+  });
+  const nServicios = dias.reduce((a, d) => a + misT(d).length, 0);
+  const total3 = dias.reduce((a, d) => a + misT(d).reduce((x, t) => x + horasTarea(t), 0), 0);
+  const tipoTxt = { limpieza: "Limpieza", mantenimiento: "Mantenimiento", piscina: "Piscina / jardín", otro: "Servicio" };
+  return `
+  <div class="kpis" style="margin-bottom:16px">
+    <div class="kpi"><div class="lab">${ICON.cal} Servicios</div><div class="val">${nServicios}</div><div class="sub">en las próximas 3 semanas</div></div>
+    <div class="kpi"><div class="lab">${ICON.clock} Horas previstas</div><div class="val">${Math.round(total3)}<small>h</small></div><div class="sub">según la planificación</div></div>
+    <div class="kpi"><div class="lab">${ICON.sun} Días libres</div><div class="val">${dias.filter(d => !misT(d).length).length}</div><div class="sub">sin servicios asignados</div></div>
+  </div>
+  <p class="hint" style="margin-bottom:14px">Tu horario de las próximas tres semanas: a qué casa vas, qué servicio das y de qué hora a qué hora. Si la oficina cambia algo, aquí lo ves actualizado al momento.</p>
+  ${semanas.map(s => {
+    const h = s.dias.reduce((a, d) => a + misT(d).reduce((x, t) => x + horasTarea(t), 0), 0);
+    return `
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-head"><h3>Semana del ${fmtCorto(s.lunes)}</h3><span class="sub">${Math.round(h)} h previstas</span></div>
+      ${s.dias.map(d => { const ts = misT(d); return `
+        <div class="mh-dia ${d === hoyISO() ? "hoy" : ""} ${ts.length ? "" : "libre"}">
+          <div class="mh-fecha"><b>${new Date(d + "T12:00").toLocaleDateString("es-ES", { weekday: "short" })}</b><span>${new Date(d + "T12:00").getDate()}</span></div>
+          <div class="mh-tareas">${ts.length ? ts.map(t => { const p = P(t.propiedad_id) || {}; const compis = (t.equipo_ids || []).filter(id => id !== me.id).map(id => S(id)?.nombre.split(" ")[0]).filter(Boolean); return `
+            <div class="mh-tarea t-${t.tipo}">
+              <b class="hr">${(t.hora_inicio || "").slice(0, 5)}${t.hora_fin ? "–" + t.hora_fin.slice(0, 5) : ""}</b>
+              <div class="tx"><b>${esc(p.nombre || "")}</b>
+                <span>${tipoTxt[t.tipo] || esc(t.tipo)}${p.zona ? " · " + esc(p.zona) : ""}${p.llave ? " · llaves " + esc(p.llave) : ""}${t.descripcion ? " · " + esc(t.descripcion) : ""}${compis.length ? " · con " + compis.join(", ") : ""}</span></div>
+            </div>`; }).join("") : `<span class="mh-libre">Libre</span>`}</div>
+        </div>`; }).join("")}
+    </div>`; }).join("")}`;
+}
+
 function viewMisHoras() {
   const me = miEmp(); if (!me) return viewMiDia();
   const iniSemana = addDias(hoyISO(), -((new Date().getDay() + 6) % 7));
@@ -1939,6 +2014,7 @@ const VIEWS = {
   clientedetail:{ t: "Cliente",       c: "Ficha, comunicación y estancias",    r: viewClienteDetail, m: () => {} },
   ajustes:      { t: "Ajustes",       c: "Empresa, usuarios y plantillas",     r: viewAjustes,       m: () => {} },
   midia:        { t: "Mi día",        c: "Fichaje, tareas e incidencias",      r: viewMiDia,         m: () => mountMiDia() },
+  mihorario:    { t: "Mi horario",    c: "Tus próximas 3 semanas",             r: viewMiHorario,     m: () => {} },
   mishoras:     { t: "Mis horas",     c: "Tu registro de jornada",             r: viewMisHoras,      m: () => {} },
   misincidencias:{ t: "Incidencias",  c: "Las que has reportado tú",           r: viewMisIncidencias,m: () => {} },
   /* propietario */
