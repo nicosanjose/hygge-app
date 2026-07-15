@@ -989,7 +989,6 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px;min-width:640px}
 .tbl.cq thead .cq-fix{z-index:3;background:#faf9f4}
 .tbl.cq th.hoy,.tbl.cq td.hoy{background:rgba(199,156,61,.08)}
 .tbl.cq th.wk,.tbl.cq td.wk{border-left:2.5px solid #cfd3c7}
-.cq-h{display:block;font-size:10.5px;color:var(--muted);margin-top:3px;padding-left:2px}
 .cq-cell{min-width:97px;vertical-align:top;position:relative;padding:6px 5px}
 .cq-add{
   display:block;width:100%;border:1.5px dashed transparent;border-radius:8px;color:var(--muted);

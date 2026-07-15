@@ -880,7 +880,6 @@ function viewPlanCuadrante(fecha) {
   const chip = t => `<button class="week-chip t-${t.tipo} ${t.estado}" onclick="event.stopPropagation();openTareaForm('${t.fecha}',null,${t.id})"
     title="${esc(P(t.propiedad_id)?.nombre || "")} · ${t.tipo} · ${(t.hora_inicio || "").slice(0, 5)}–${(t.hora_fin || "").slice(0, 5)}">
     ${(t.hora_inicio || "").slice(0, 5)} ${esc((P(t.propiedad_id)?.nombre || "").replace(/^(Villa|Finca|Casa|Xalet|Apartament|Àtic)\s+/i, ""))}</button>`;
-  const horasSem = (empId, w) => Math.round(dias.slice(w * 7, w * 7 + 7).reduce((a, d) => a + tareasDe(empId, d).reduce((x, t) => x + horasTarea(t), 0), 0));
   const clase = d => `${d === hoyISO() ? "hoy" : ""} ${((new Date(d + "T12:00").getDay() + 6) % 7) === 0 ? "wk" : ""}`;
   const celda = (empId, d) => `<td class="cq-cell ${clase(d)}">
     ${tareasDe(empId, d).map(chip).join("")}<button class="cq-add" title="Asignar servicio este día" onclick="openTareaForm('${d}',null,null,${empId || "null"})">+</button></td>`;
@@ -890,13 +889,12 @@ function viewPlanCuadrante(fecha) {
     <thead><tr><th class="cq-fix">Trabajador</th>${dias.map(d => `
       <th class="${clase(d)}">${new Date(d + "T12:00").toLocaleDateString("es-ES", { weekday: "short", day: "numeric" })}</th>`).join("")}</tr></thead>
     <tbody>
-      ${activos.map(e => `<tr><td class="cq-fix"><span class="who">${ava(e)} ${esc(e.nombre.split(" ")[0])}</span>
-          <span class="cq-h">${[0, 1, 2].map(w => horasSem(e.id, w)).join(" · ")} h/sem</span></td>
+      ${activos.map(e => `<tr><td class="cq-fix"><span class="who">${ava(e)} ${esc(e.nombre.split(" ")[0])}</span></td>
         ${dias.map(d => celda(e.id, d)).join("")}</tr>`).join("")}
       ${sinAsignar ? `<tr><td class="cq-fix"><span class="who" style="color:var(--terra)">${ICON.alert} Sin asignar</span></td>
         ${dias.map(d => celda(null, d)).join("")}</tr>` : ""}
     </tbody></table></div>
-  <p class="hint" style="margin-top:10px">Las próximas 3 semanas de un vistazo (desplaza hacia los lados). Toca un servicio para editarlo, o el <b>+</b> de cualquier casilla para asignar a esa persona ese día. Columna dorada = hoy · línea marcada = cambio de semana · bajo cada nombre, sus horas previstas por semana. Con <b>Copiar semana</b> repites el cuadrante base en segundos y solo retocas los cambios.</p>`;
+  <p class="hint" style="margin-top:10px">Las próximas 3 semanas de un vistazo (desplaza hacia los lados). Toca un servicio para editarlo, o el <b>+</b> de cualquier casilla para asignar a esa persona ese día. Columna dorada = hoy · línea marcada = cambio de semana. Con <b>Copiar semana</b> repites el cuadrante base en segundos y solo retocas los cambios.</p>`;
 }
 
 /* papeles del horario: agenda individual y cuadrante global */
